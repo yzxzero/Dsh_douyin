@@ -11,7 +11,7 @@ import { beijing, isPeak, ratesFor, costOf } from './lib/pricing.mjs';
 import { chatCompletion, fetchBalance } from './lib/ai.mjs';
 import { buildMessages, commandReply } from './lib/persona.mjs';
 import { DanmakuBridge } from './lib/cortico.mjs';
-import { resolveTrack, listLocal, findById, trackPath, musicDir, search as musicSearch, clearCache as clearMusicCache, neteaseMember, neteaseCookieOf, takeResolveReason } from './lib/music.mjs';
+import { resolveTrack, listLocal, findById, trackPath, musicDir, search as musicSearch, clearCache as clearMusicCache, neteaseMember, neteaseCookieOf, takeResolveReason, loadPlaylistTracks, resolvePlaylistTrack, parsePlaylistId } from './lib/music.mjs';
 import { synthesize, listVoices, voiceMediaPath, EDGE_PRESETS, KOKORO_PRESETS, MINIMAX_PRESETS } from './lib/voice.mjs';
 import {
   fitAttach,
@@ -45,6 +45,7 @@ import {
   nextStartMs,
   markReminded,
   setAudio,
+  setReadingPaused,
   setSummary,
   setCard,
   buildCardMessages,
@@ -192,6 +193,10 @@ function musicView() {
     queueMax: cfg.music?.queueMax ?? 3,
     hasCookie: Boolean(neteaseCookieOf(cfg)),
     member: memberCache,
+    /* 没人点歌时循环放的那个歌单 */
+    playlistId: parsePlaylistId(cfg.music?.playlistId || ''),
+    autoPlaylist: cfg.music?.autoPlaylist !== false,
+    autoCursor: Number(getState().autoCursor) || 0,
     tracks: tracks.map((t) => ({ id: t.id, title: t.title, by: t.by, size: t.size, file: t.file })),
     count: tracks.length,
   };
@@ -218,14 +223,20 @@ let resolvingSong = null;
 let voiceError = null;
 
 /** 合成用的参数：各引擎共用 rate/preset，MiniMax 额外读取专属配置 */
+const DEFAULT_PRESET = { kokoro: 'xiaobei', minimax: 'lyrical', edge: 'natural' };
 function voiceOptsOf(cfg, extra = {}) {
+  const { chapter = false, ...rest } = extra;
   const v = cfg.voice || {};
-  const engine = ['edge', 'kokoro', 'minimax'].includes(v.engine) ? v.engine : 'sapi';
+  const known = (x) => ['edge', 'kokoro', 'minimax'].includes(x);
+  const base = known(v.engine) ? v.engine : 'sapi';
+  /* 整章朗读可以单独指定引擎：本地合成慢，正文用在线音色、弹幕短句仍用本地 */
+  const engine = chapter && known(v.chapterEngine) ? v.chapterEngine : base;
+  const sameEngine = engine === base;
   return {
     engine,
     rate: v.rate ?? 1,
     voice: v.voice || undefined,
-    preset: v.preset || (engine === 'kokoro' ? 'xiaobei' : engine === 'minimax' ? 'lyrical' : 'natural'),
+    preset: (sameEngine && v.preset) || DEFAULT_PRESET[engine] || 'natural',
     speed: v.speed ?? undefined,
     minimaxVoice: v.minimaxVoice || undefined,
     minimaxModel: v.minimaxModel || undefined,
@@ -233,13 +244,15 @@ function voiceOptsOf(cfg, extra = {}) {
     minimaxBaseUrl: v.minimaxBaseUrl || undefined,
     minimaxPitch: v.minimaxPitch ?? 0,
     minimaxApiKey: v.minimaxApiKey || undefined,
-    ...extra,
+    ...rest,
   };
 }
 async function resolveCurrent({ force = false } = {}) {
   const cur = getState().currentSong;
   if (!cur) return null;
-  if (!force && cur.url) return cur;
+  /* 网易云直链只有几个小时的有效期：老地址别硬用，过两小时就当没解析过 */
+  const stale = cur.resolvedAt && Date.now() - Number(cur.resolvedAt) > 2 * 3600_000;
+  if (!force && cur.url && !stale) return cur;
   if (resolvingSong) return resolvingSong;
   resolvingSong = (async () => {
     const cfg = getConfig();
@@ -270,6 +283,120 @@ async function resolveCurrent({ force = false } = {}) {
     resolvingSong = null;
   });
   return resolvingSong;
+}
+
+/* ---------- 没人点歌时：循环放自己的歌单 ---------- */
+let autoPlayBusy = false;
+let autoFailAt = 0; // 连续失败就别每 15 秒去打一次接口
+/* 取不到直链的曲目（无版权/会员过期）记一笔，下次别再从头试一遍 */
+const autoDeadTracks = new Set();
+let autoPlaylistSeen = '';
+const AUTO_SCAN_MAX = 15; // 单次最多试几首，免得一次卡好几分钟
+
+/**
+ * 从歌单游标处往后找一首能放的。
+ * 整张轮完都取不到就返回 null，不硬撑；试过的坏曲目记进黑名单。
+ */
+async function autoPlayNext({ quiet = false } = {}) {
+  const cfg = getConfig();
+  const m = cfg.music || {};
+  if (m.autoPlaylist === false) return null;
+  const id = parsePlaylistId(m.playlistId || '');
+  if (!id) return null;
+  if (autoPlaylistSeen !== id) {
+    /* 换了歌单：之前记的「没版权」名单作废 */
+    autoPlaylistSeen = id;
+    autoDeadTracks.clear();
+  }
+
+  let tracks = [];
+  try {
+    tracks = await loadPlaylistTracks(cfg, id);
+  } catch (err) {
+    autoFailAt = Date.now();
+    if (!quiet) console.warn('[music] 歌单读不到：', err.message);
+    return null;
+  }
+  if (!tracks.length) {
+    autoFailAt = Date.now();
+    return null;
+  }
+
+  const s = getState();
+  const start = Number(s.autoCursor) || 0;
+  let scanned = 0;
+  for (let i = 0; i < tracks.length && scanned < AUTO_SCAN_MAX; i++) {
+    const t = tracks[(start + i) % tracks.length];
+    if (autoDeadTracks.has(t.id)) continue;
+    scanned += 1;
+    const hit = await resolvePlaylistTrack(cfg, t).catch(() => null);
+    if (!hit) {
+      autoDeadTracks.add(t.id);
+      continue;
+    }
+    s.autoCursor = (start + i + 1) % tracks.length; // 下一首从后头接，整张循环
+    scheduleSave();
+    setCurrentSong({
+      title: hit.title,
+      by: hit.by || '我的歌单',
+      url: hit.url,
+      kind: 'remote',
+      provider: 'netease',
+      providerId: hit.id,
+      durationSec: hit.durationSec || null,
+      resolvedTitle: hit.title,
+      resolvedBy: hit.by || '',
+      resolvedAt: Date.now(),
+      fromPlaylist: true,
+    });
+    broadcast({ type: 'song', ...songView() });
+    ensureSystemVolume().catch(() => {});
+    console.log(`[music] 没人点歌，接着放歌单：${hit.title}${hit.by ? ` · ${hit.by}` : ''}`);
+    return getState().currentSong;
+  }
+  autoFailAt = Date.now();
+  if (!quiet) {
+    console.warn(`[music] 歌单里这一轮没找到可播放的（已跳过 ${autoDeadTracks.size} 首没源的）`);
+  }
+  return null;
+}
+
+/** 兜底：页面要是没把「播完」报回来（页面关了 / 播放器出错），别让歌卡死在一首上 */
+let lastMusicAdvanceAt = 0;
+function startMusicWatchdog() {
+  setInterval(async () => {
+    const s = getState();
+    const cur = s.currentSong;
+    if (!cur || !cur.url || !cur.resolvedAt) return;
+    const dur = Number(cur.durationSec) || 0;
+    if (dur < 60) return; // 时长不明就别瞎切
+    if (Date.now() - lastMusicAdvanceAt < 20_000) return; // 刚切过，给页面留点时间
+    const played = (Date.now() - Number(cur.resolvedAt)) / 1000;
+    if (played < dur + 90) return;
+    lastMusicAdvanceAt = Date.now();
+    let next = nextSong();
+    if (next) await resolveCurrent({ force: true });
+    else next = await autoPlayNext({ quiet: true });
+    broadcast({ type: 'song', ...songView() });
+    console.log(`[music] 这首歌超时没收到「播完」，自动切下一首：${next ? next.title : '（没有下一首）'}`);
+  }, 30_000);
+}
+
+/** 闲着的时候兜底：一首都没在放、队列也空，就接上歌单（没人点歌时的循环） */
+function startPlaylistTicker() {
+  setInterval(() => {
+    const s = getState();
+    if (autoPlayBusy) return;
+    if (s.currentSong) return; // 有歌在放（包括被按了暂停）就别插手
+    if (s.playlist.length) return; // 队列里有点歌，让它们先放
+    if (Date.now() - autoFailAt < 60_000) return; // 刚失败过，缓一分钟
+    autoPlayBusy = true;
+    autoPlayNext({ quiet: true })
+      .catch((err) => console.warn('[music] 歌单自动续播失败：', err.message))
+      .finally(() => {
+        autoPlayBusy = false;
+      });
+  }, 15_000);
 }
 
 function songReplyText(title, ok) {
@@ -450,21 +577,236 @@ async function speakReply(text) {
   }
 }
 
+// ---------- 进房打招呼 + 定时功能提示 ----------
+/* 欢迎就只是欢迎：规则由下面的 TIPS 定时去讲，别在门口堵着人念说明书 */
+const GREET_LINES = [
+  (who) => `欢迎 ${who} 进来～`,
+  (who) => `欢迎 ${who}，找个位置坐～`,
+  (who) => `${who} 来啦，欢迎欢迎～`,
+  (who) => `欢迎 ${who} 进直播间，慢慢听～`,
+];
+let greetLineIndex = 0;
+
+/* 每分钟轮流念一条「怎么玩」，免得观众不知道有哪些功能 */
+const TIPS = [
+  '点歌：发「点歌 晴天」就行，一次能排 3 首，满了会告诉你。',
+  '不想听这首：发「切歌」直接换下一首。',
+  '想看我念到哪、人物都有谁：发「查看角色」，想回到正文发「查看故事」。',
+  '想决定明天讲什么：发「选题 想听的故事」，票多的我优先写。',
+  '送礼物我会念出来，还会记在小本本上。',
+  '听到有意思的句子直接问，我插一句再接着念，不会漏掉原文。',
+];
+const TIP_PREFIX = '【小提示】';
+
+/* 没人说话时的暖场词：AI 不给力（没 Key / 超时）就用这些顶上 */
+const IDLE_LINES = [
+  '灯还亮着，本鲸在这儿呢，想聊什么就说。',
+  '有点安静呢，要不要点首歌？本鲸给你放。',
+  '这会儿正好歇口气，等你们说话。',
+  '弹幕里冒个泡吧，本鲸都看着呢。',
+  '要不要本鲸接着往下念？发个「继续」就行。',
+];
+
+const guideState = { enters: [], lastGreetAt: 0, greetTimer: null, tipIndex: 0, lastTipAt: 0 };
+let lastActivityAt = Date.now();
+let lastIdleAt = 0;
+let idleBusy = false;
+
+/** 名字里带一堆表情/符号，读出来全是噪音；抠成能念的样子 */
+function speakableName(name) {
+  const raw = String(name || '').trim();
+  const cleaned = raw
+    .replace(/[^\u4e00-\u9fa5A-Za-z0-9_-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return '新朋友';
+  if (/^\d{6,}$/.test(cleaned)) return `用户${cleaned.slice(-4)}`;
+  return cleaned.slice(0, 12);
+}
+
+/** 朗读/准备中不抢麦：只往聊天框里发字，不合成语音 */
+function maySpeakNow() {
+  const phase = getNovel()?.phase || 'idle';
+  return phase !== 'reading' && phase !== 'preparing';
+}
+
+/** 以「大肥鱼」身份发一条：进弹幕流 + 写抖音公屏（可选合成语音）
+ *  interruptInReading：念正文时也要出声（走插播，页面会停一下正文再续） */
+async function fishLine(text, { source = 'guide', wantVoice = false, interruptInReading = false } = {}) {
+  const cfg = getConfig();
+  const reading = !maySpeakNow();
+  let voice = '';
+  if (wantVoice && cfg.voice?.enabled !== false && (!reading || interruptInReading)) {
+    try {
+      const out = await synthesize(text, voiceOptsOf(cfg, { maxChars: 300 }));
+      voice = out.url || '';
+    } catch (err) {
+      console.warn('[guide] 语音没合成出来：', err.message);
+    }
+  }
+  const ev = recordEvent({
+    kind: 'ai',
+    username: '大肥鱼',
+    text,
+    source,
+    voice,
+    interruptStory: Boolean(voice && reading), // 念正文时插一句，播完接着念
+  });
+  pushEvent(ev);
+  enqueueReply(text);
+  return ev;
+}
+
+/** 有人进房：先攒着，过了间隔再一起欢迎（人多时合并成一句） */
+function noteEnter(username) {
+  const g = getConfig().guide || {};
+  if (g.greet === false) return;
+  const name = String(username || '').trim();
+  if (!name || name === '神秘观众') return;
+  if (!guideState.enters.includes(name)) guideState.enters.push(name);
+  if (guideState.enters.length > 12) guideState.enters.shift();
+  const gap = Math.max(5, Number(g.greetGapSec ?? 20)) * 1000;
+  const wait = Math.max(0, guideState.lastGreetAt + gap - Date.now());
+  clearTimeout(guideState.greetTimer);
+  guideState.greetTimer = setTimeout(() => {
+    flushGreets().catch((err) => console.warn('[guide] 欢迎失败：', err.message));
+  }, wait);
+}
+
+async function flushGreets() {
+  const names = guideState.enters.splice(0, guideState.enters.length);
+  if (!names.length) return;
+  guideState.lastGreetAt = Date.now();
+  /* 名字处理成「能念出口」的样子：表情符号读出来是噪音 */
+  const spoken = names.map(speakableName);
+  const head = spoken.slice(0, 3).join('、');
+  const who = spoken.length > 3 ? `${head} 等 ${spoken.length} 位` : head;
+  /* 只报名字，不念规则：一句话说完就闭嘴，别打断正文太久 */
+  const line = GREET_LINES[greetLineIndex++ % GREET_LINES.length];
+  const text = line(who);
+  const g = getConfig().guide || {};
+  await fishLine(text, {
+    source: 'greet',
+    wantVoice: g.greetVoice !== false,
+    /* 念正文时也要把名字念出来：当插播处理，说完接着念 */
+    interruptInReading: g.greetInReading !== false,
+  });
+  console.log(`[guide] 欢迎 ${names.length} 位：${head}${g.greetVoice === false ? '（不出声）' : ''}`);
+}
+
+/** 冷场时主动说一句：优先让模型按当前情境编，不行就用固定词 */
+async function makeIdleLine(cfg) {
+  const nv = getNovel() || {};
+  const phase = nv.phase || 'idle';
+  const scene = {
+    idle: '还没开讲，你在陪观众聊天',
+    break: `刚念完一章，在休息，刚才念的是《${nv.title || ''}》`,
+    afterword: `整本《${nv.title || ''}》念完了，在和大家讨论`,
+    done: '今天的书念完了，在闲聊',
+  }[phase] || '在闲聊';
+
+  if (cfg.ai?.enabled && cfg.ai?.apiKey) {
+    try {
+      const res = await aiComplete(
+        cfg,
+        [
+          {
+            role: 'system',
+            content:
+              '你是直播间主播「大肥鱼」，蓝发鲸鱼女仆，说话慢、心软。现在直播间没人说话，你主动说一句暖场的话。\n' +
+              '要求：12～28 个字，像真人随口说的；不要提问超过一句；不要括号动作、表情符号、markdown；不要提「AI」「模型」。',
+          },
+          { role: 'user', content: `${scene}。说一句，别冷场。` },
+        ],
+        { temperature: 1.25, maxTokens: 80, timeoutMs: 20000 },
+      );
+      const usage = res.usage;
+      const cost = costOf(usage, ratesFor(cfg.pricing, res.usedModel || cfg.ai.model));
+      addUsageOnly({ usage, cost });
+      const text = String(res.text || '')
+        .replace(/^["“「]|["”」]$/g, '')
+        .replace(/\s*\n+\s*/g, ' ')
+        .trim()
+        .slice(0, 60);
+      if (text) return text;
+    } catch (err) {
+      console.warn('[guide] 暖场词没生成出来，用固定词：', err.message);
+    }
+  }
+  return IDLE_LINES[Math.floor(Math.random() * IDLE_LINES.length)];
+}
+
+/** 30 秒没人说话就主动开口（正文在念的时候不算冷场，不插嘴） */
+function startIdleTicker() {
+  setInterval(async () => {
+    const cfg = getConfig();
+    const g = cfg.guide || {};
+    const every = Number(g.idleEverySec ?? 30);
+    if (!every || every < 15) return;
+    if (idleBusy || fitOnline()) return;
+    const phase = getNovel()?.phase || 'idle';
+    if (phase === 'reading' || phase === 'preparing') return; // 正文在放，不叫冷场
+    if (Date.now() - lastActivityAt < every * 1000) return;
+    if (Date.now() - lastIdleAt < every * 1000) return;
+    idleBusy = true;
+    lastIdleAt = Date.now();
+    try {
+      const text = await makeIdleLine(cfg);
+      if (text) {
+        await fishLine(text, { source: 'idle', wantVoice: true });
+        console.log(`[guide] 冷场暖一句：${text.slice(0, 30)}`);
+      }
+    } catch (err) {
+      console.warn('[guide] 暖场失败：', err.message);
+    } finally {
+      idleBusy = false;
+    }
+  }, 10_000);
+}
+
+/** 定时功能提示：每 tipEverySec 秒发一条，内容轮着来 */
+function startGuideTicker() {
+  setInterval(() => {
+    const g = getConfig().guide || {};
+    const every = Number(g.tipEverySec ?? 60);
+    if (!every || every < 20) return;
+    if (fitOnline()) return; // 健身房直播间自己有人说话
+    if (Date.now() - guideState.lastTipAt < every * 1000) return;
+    if (guideState.lastTipAt && Date.now() - guideState.lastTipAt > every * 6 * 1000) {
+      /* 中间停了很久（比如服务刚重启），重新计时，别一上来就刷 */
+      guideState.lastTipAt = Date.now();
+      return;
+    }
+    guideState.lastTipAt = Date.now();
+    const tip = TIPS[guideState.tipIndex++ % TIPS.length];
+    fishLine(`${TIP_PREFIX}${tip}`, { source: 'tip', wantVoice: g.tipVoice === true }).catch((err) =>
+      console.warn('[guide] 提示失败：', err.message),
+    );
+  }, 5000);
+}
+
 async function doReply(job) {
   const cfg = getConfig();
   const s = getState();
   const mode = replyPhase();
+  const interruptStory = getNovel()?.phase === 'reading' && cfg.novel?.interruptOnChat === true &&
+    cfg.voice?.enabled !== false && job.kind === 'chat' && Boolean(job.text) && !job.gift;
+
+  const replyAudio = async (text) => {
+    if (mode === 'voice') return { voiceOnly: true, voice: await speakReply(text) };
+    if (!interruptStory) return {};
+    /* 合成要几秒，这期间这章可能已经念完或切走了：那就别再打断，回在聊天框里就行 */
+    if (getNovel()?.phase !== 'reading') return {};
+    const voice = await speakReply(text);
+    return voice ? { voice, interruptStory: true } : {};
+  };
 
   const deliver = async (text, extra = {}) => {
     if (!text) return;
     lastReplyText = text;
-    if (mode === 'voice') {
-      const url = await speakReply(text);
-      pushEvent(addAiEvent({ text, source: extra.source || 'ai', voiceOnly: true, voice: url }));
-      return;
-    }
-    pushEvent(addAiEvent({ text, source: extra.source || 'ai' }));
-    enqueueReply(text);
+    const audio = await replyAudio(text);
+    pushEvent(addAiEvent({ text, source: extra.source || 'ai', ...audio }));
+    if (!audio.voiceOnly) enqueueReply(text);
   };
 
   if (job.kind === 'command') {
@@ -532,10 +874,20 @@ async function doReply(job) {
     }
   }
 
+  /* 插播的那一句要短：观众正听着正文，停下来只为回你一句话 */
+  if (interruptStory) {
+    messages.push({
+      role: 'system',
+      content:
+        '这条回复会插在朗读中间播出去（正文先停下来等你）。所以只说一句、40 字以内，直接接话，不要「好的」「哈哈」这种垫场，' +
+        '不要括号里的动作，也不要又去问观众问题——回完就要接着念正文。',
+    });
+  }
+
   const started = Date.now();
   const raw = await aiComplete(cfg, messages, {
     temperature: cfg.ai.temperature,
-    maxTokens: mode === 'voice' ? 260 : cfg.ai.maxTokens,
+    maxTokens: mode === 'voice' || interruptStory ? 260 : cfg.ai.maxTokens,
   });
   const text = String(raw.text || '')
     .replace(/^["“「]|["”」]$/g, '')
@@ -549,16 +901,12 @@ async function doReply(job) {
   console.log(
     `[ai] ${job.username} → ${text.slice(0, 30)}… in=${usage?.prompt_tokens ?? 0} out=${usage?.completion_tokens ?? 0} ¥${cost}`,
   );
-  if (mode === 'voice') {
-    // 语音回复：不进聊天框，也不推给扩展
-    const url = await speakReply(text);
-    ev.voiceOnly = true;
-    ev.voice = url;
-    pushEvent(ev);
-    return;
-  }
+  Object.assign(ev, await replyAudio(text));
   pushEvent(ev);
-  enqueueReply(text);
+  if (ev.interruptStory) {
+    console.log(`[reply] 插播一条（正文暂停，回完接着念）：${text.slice(0, 24)}…`);
+  }
+  if (!ev.voiceOnly) enqueueReply(text);
 }
 
 // ---------- 指令解析 ----------
@@ -632,6 +980,7 @@ function handleIncoming(body) {
     return { ok: false, error: '未知事件类型' };
   }
   if (kind === 'chat' && !text) return { ok: false, error: '弹幕内容为空' };
+  lastActivityAt = Date.now(); // 有人说话就不算冷场
 
   const item = { kind, username: username || '神秘观众', text, gift, source: body.source || 'extension' };
   /* 礼物不做 4 秒去重：同一人连送两次同名小礼物是正常行为（重复上报由 giftId 兜底在桥里处理） */
@@ -714,6 +1063,9 @@ function handleIncoming(body) {
     }
   } else if (ev.kind === 'gift' && cfg.reply.auto && cfg.ai.enabled && cfg.ai.replyToGifts) {
     scheduleReply({ kind: 'chat', username: ev.username, text: '', gift: ev.gift });
+  } else if (ev.kind === 'enter') {
+    /* 有人进房 → 攒一下，过了间隔统一欢迎一句（不烧 token，也不刷屏） */
+    noteEnter(ev.username);
   }
   return { ok: true, item: eventView(ev) };
 }
@@ -1079,7 +1431,8 @@ async function storyScheduleTick() {
 
 async function synthChapter(cfg, ch) {
   const say = `${spokenTitle(ch.title)}。\n${speechOf(ch.text)}`;
-  const out = await synthesize(say, voiceOptsOf(cfg, { maxChars: 40000 }));
+  /* chapter: true → 正文可以单独走 voice.chapterEngine（本地 Kokoro 太慢，不适合几千字） */
+  const out = await synthesize(say, voiceOptsOf(cfg, { maxChars: 40000, chapter: true }));
   return out.url || '';
 }
 
@@ -1088,12 +1441,32 @@ function estChapterMs(text) {
   return Math.round((String(text || '').length / 4) * 1000 * 1.25) + 20000;
 }
 
+/* 插播弹幕回复时正文会停一会儿。页面每次暂停/继续都会报过来，
+ * 这里把这些时间从「已经念了多久」里减掉，看门狗才不会提前判这章念完。 */
+const MAX_INTERJECT_PAUSE_MS = 5 * 60_000; // 页面掉线没回报「继续」时，最多认 5 分钟
+
+function pausedMsOf(nv) {
+  const done = Number(nv?.pausedMs) || 0;
+  if (!nv?.pausedAt) return done;
+  const cur = Date.now() - Number(nv.pausedAt);
+  if (!(cur > 0)) return done;
+  return done + Math.min(cur, MAX_INTERJECT_PAUSE_MS);
+}
+
+/** 正文此刻正被一条弹幕回复插着（且没超时） */
+function interjectingNow(nv) {
+  if (!nv?.pausedAt) return false;
+  return Date.now() - Number(nv.pausedAt) < MAX_INTERJECT_PAUSE_MS;
+}
+
 /** 这一章还要多久（音频在播时按真实时长算，否则按字数估），再加 45 秒缓冲 */
 function watchdogDelay() {
   const nv = getNovel() || {};
   const total = Number(nv.audioMs || 0) || estChapterMs(currentChapter()?.text || '');
   const played = nv.chapterStartedAt ? Date.now() - nv.chapterStartedAt : 0;
-  const left = Math.max(20000, total - played);
+  /* 已经播掉的时间 = 墙上时间 - 插播暂停的时间 */
+  const listened = Math.max(0, played - pausedMsOf(nv));
+  const left = Math.max(20000, total - listened);
   return left + 45000;
 }
 
@@ -1304,6 +1677,11 @@ async function novelStep() {
   }
 
   // reading：音频在播，等 ended 或看门狗（优先用页面回填的真实时长）
+  if (interjectingNow(getNovel())) {
+    /* 正在插播弹幕回复：正文停着，看门狗先别抢戏，等它回完接着念 */
+    scheduleNovel(5000);
+    return { ok: true, reading: true, waiting: true, interjecting: true };
+  }
   scheduleNovel(watchdogDelay());
   return { ok: true, reading: true, waiting: true };
 }
@@ -1808,11 +2186,35 @@ const server = createServer(async (req, res) => {
 
     // 前端 <audio> 播完一首 → 自动下一首
     if (p === '/api/music/ended' && req.method === 'POST') {
-      const cur = nextSong();
-      if (cur) await resolveCurrent({ force: true });
+      lastMusicAdvanceAt = Date.now();
+      let cur = nextSong();
+      if (cur) {
+        await resolveCurrent({ force: true });
+      } else {
+        /* 队列空了 → 没人点歌，接着放自己的歌单（整张循环） */
+        cur = await autoPlayNext({ quiet: true });
+      }
       broadcast({ type: 'song', ...songView() });
       if (cur) ensureSystemVolume().catch(() => {});
       return json(res, 200, { ok: true, currentSong: cur, song: songView() });
+    }
+
+    // 歌单里有什么（操作台用来显示「歌单 99 首」，也顺手验证 cookie 还能不能读私密歌单）
+    if (p === '/api/music/playlist' && req.method === 'GET') {
+      const cfg = getConfig();
+      const id = parsePlaylistId(url.searchParams.get('id') || cfg.music?.playlistId || '');
+      if (!id) return json(res, 400, { ok: false, error: '没有歌单 ID' });
+      try {
+        const tracks = await loadPlaylistTracks(cfg, id);
+        return json(res, 200, {
+          ok: true,
+          id,
+          count: tracks.length,
+          head: tracks.slice(0, 5).map((t) => `${t.title}${t.by ? ` · ${t.by}` : ''}`),
+        });
+      } catch (err) {
+        return json(res, 200, { ok: false, id, error: err.message });
+      }
     }
 
     if (p === '/api/music/search' && req.method === 'GET') {
@@ -1850,6 +2252,7 @@ const server = createServer(async (req, res) => {
           volume: cfg.voice?.volume ?? 0.9,
           rate: cfg.voice?.rate ?? 1,
           engine: cfg.voice?.engine || 'edge',
+          chapterEngine: cfg.voice?.chapterEngine || '',
           preset: cfg.voice?.preset || 'natural',
           name: cfg.voice?.voice || '',
           voices: await listVoices().catch(() => []),
@@ -1985,6 +2388,8 @@ const server = createServer(async (req, res) => {
       const ms = setAudioMs(body.duration);
       // 时长回填后重排看门狗，避免按字数估的长短偏差
       const v1 = storyView(getConfig());
+      /* 页面报上真实时长 = 它真的把这一章加载起来了；不报就说明页面没拿到音频 */
+      console.log(`[audio] 页面回报章节时长 ${Math.round(ms / 1000)}s`);
       if (v1.phase === 'reading' && novelTimer) clearTimeout(novelTimer);
       if (v1.phase === 'reading') scheduleNovel(watchdogDelay());
       return json(res, 200, { ok: true, audioMs: ms });
@@ -1995,6 +2400,22 @@ const server = createServer(async (req, res) => {
       const mode = setDisplayMode(body.mode);
       broadcastNovel('type');
       return json(res, 200, { ok: true, mode, story: storyView(getConfig()) });
+    }
+
+    // 插播弹幕回复：页面在暂停/继续正文时报一下，看门狗据此刨掉暂停时间
+    if (p === '/api/novel/pause' && req.method === 'POST') {
+      const body = await readBody(req).catch(() => ({}));
+      const paused = body.paused !== false;
+      const ms = setReadingPaused(paused);
+      const v = storyView(getConfig());
+      /* 有这条日志就说明直播页确实在暂停正文播回复；没有就是页面那边没动 */
+      console.log(`[pause] 页面${paused ? '暂停' : '继续'}正文${paused ? '' : `（本章累计暂停 ${Math.round(ms / 1000)}s）`}`);
+      if (v.phase === 'reading') {
+        clearTimeout(novelTimer);
+        novelTimer = null;
+        scheduleNovel(paused ? 60_000 : watchdogDelay());
+      }
+      return json(res, 200, { ok: true, paused, pausedMs: ms });
     }
 
     if ((p === '/api/novel/advance' || p === '/api/novel/next') && req.method === 'POST') {
@@ -2159,6 +2580,15 @@ server.listen(PORT_FINAL, '127.0.0.1', () => {
   }, 60_000);
   broadcastScheduleTick();
   storyScheduleTick().catch(() => {});
+  /* 功能提示：服务刚起来先不刷，等一个间隔再开始 */
+  guideState.lastTipAt = Date.now();
+  startGuideTicker();
+  /* 没人点歌时循环放歌单 */
+  startPlaylistTicker();
+  /* 歌曲卡住（页面没报播完）时兜底切下一首 */
+  startMusicWatchdog();
+  /* 冷场暖场：30 秒没人说话就主动开口 */
+  startIdleTicker();
   if (cfg.danmaku?.mode !== 'off') {
     const rid = cfg.danmaku?.roomId || cfg.roomId || '';
     if (rid) {

@@ -1,4 +1,6 @@
 /* 大肥鱼 · 写故事直播间 前端 */
+import { createPetLipSync } from './pet-lip-sync.js';
+
 const SERVER = location.origin;
 const bubble = document.getElementById('bubble');
 const feed = document.getElementById('feed');
@@ -79,6 +81,10 @@ const state = {
   clockBase: null,
   broadcast: null,
 };
+
+const watchVoice = createPetLipSync(pet, { cover: true });
+watchVoice(el.voicePlayer);
+watchVoice(el.storyAudio);
 
 /* ---------- 画面自适应：铺满浏览器，不做等比缩放 ---------- */
 function fit() {
@@ -178,6 +184,18 @@ pet.addEventListener('error', () => {
   fallback.hidden = false;
 });
 
+/* 人物是 webm 视频：窗口被遮住 / 切到后台时，Chrome 会停掉视频解码，
+ * OBS、直播伴侣那边就只剩一张空画面——表现为「怎么都不入画，切一下场景才出来」。
+ * 这里做个自愈：页面重新可见就立刻续播，平时每 3 秒兜一次底。 */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') pet.play?.()?.catch?.(() => {});
+});
+setInterval(() => {
+  if (document.visibilityState === 'hidden') return;
+  if (pet.style.display === 'none' || !pet.currentSrc) return;
+  if (pet.paused || pet.readyState < 2) pet.play?.()?.catch?.(() => {});
+}, 3000);
+
 /* 空闲时自己玩一下：每 16–22 秒换一个小动作 */
 setInterval(() => {
   if (state.typing || !state.audioUnlocked) return;
@@ -211,28 +229,51 @@ function playReplyAudio(item) {
   const showHint = () => {
     if (!el.voiceHint) return;
     el.voiceHint.hidden = false;
-    el.voiceHint.textContent = `🔊 ${text.length > 34 ? `${text.slice(0, 34)}…` : text}`;
+    /* 插播时加个记号：观众知道正文为什么停了、马上会接着念 */
+    const mark = item.interruptStory ? '🎤 插播' : '🔊';
+    el.voiceHint.textContent = `${mark} ${text.length > 34 ? `${text.slice(0, 34)}…` : text}`;
     clearTimeout(playReplyAudio.timer);
     playReplyAudio.timer = setTimeout(() => {
       el.voiceHint.hidden = true;
     }, Math.max(5000, text.length * 260));
   };
-  if (!state.voiceEnabled) return;
+  if (!state.voiceEnabled || (storyPausedForReply && !item.voice)) return;
   showHint();
   if (item.voice) {
     const url = new URL(item.voice, location.origin).href;
+    if (item.interruptStory && state.story?.phase === 'reading' && !el.storyAudio.paused && !el.storyAudio.ended) {
+      storyPausedForReply = true;
+      storyPausedAt = Date.now();
+      el.storyAudio.pause();
+      reportStoryPaused(true);
+    }
     speakToken += 1; /* 打断上一句 */
     el.voicePlayer.pause();
     el.voicePlayer.src = url;
     el.voicePlayer.volume = Number(state.voiceVolume ?? 0.8);
+    clearTimeout(replyAudioTimer);
     const restore = () => {
+      if (el.voicePlayer.onended !== restore) return;
+      clearTimeout(replyAudioTimer);
       el.voicePlayer.onended = null;
       el.voicePlayer.onerror = null;
       restoreStoryDisplay();
+      if (storyPausedForReply) {
+        storyPausedForReply = false;
+        storyPausedAt = 0;
+        reportStoryPaused(false);
+        if (state.story) syncStoryAudio(state.story, { resume: true });
+      }
     };
     el.voicePlayer.onended = restore;
     el.voicePlayer.onerror = restore;
-    el.voicePlayer.play().catch(() => {});
+    if (storyPausedForReply) {
+      replyAudioTimer = setTimeout(() => {
+        el.voicePlayer.pause();
+        restore();
+      }, Math.max(30_000, text.length * 450));
+    }
+    el.voicePlayer.play().catch(restore);
     setMood(Math.random() < 0.5 ? 'talk' : 'happy', 5200);
     return;
   }
@@ -291,6 +332,10 @@ function addMessage(item, { animate = true } = {}) {
     setMood(pick(GIFT_POOL), 5600);
   } else if (item.kind === 'enter' || item.kind === 'follow') {
     setMood('greet', 3400);
+  } else if (animate && (item.interruptStory || item.voice)) {
+    /* 只要带语音就播：进房欢迎、功能提示、暖场这些不是「插播」，
+     * 不会暂停正文（interruptStory 为假时 playReplyAudio 里不会按暂停）。 */
+    playReplyAudio(item);
   } else if (item.kind === 'ai') {
     setMood(Math.random() < 0.5 ? 'laugh' : 'shy', 3600);
   } else if (item.kind === 'chat') {
@@ -434,7 +479,50 @@ function speak(text) {
 /* 一章就是一段音频：播完告诉服务端「这章念完了」，服务端开始 5 分钟休息。 */
 let storyAudioSrc = '';
 let storyAudioDone = '';
+let storyPausedForReply = false;
+let storyPausedAt = 0; /* 这次「为回复暂停」是从什么时候开始的（防卡死用） */
+let replyAudioTimer;
 const STORY_SCROLL_DELAY_SEC = 30;
+const STORY_POS_KEY = 'dafeiyu.storyPos';
+
+/* 记一下念到哪一毫秒：页面刷新 / 窗口重开（换音色、改启动参数）之后能接着念，
+ * 不然每次刷新都会从这一章的开头重念。 */
+function rememberStoryPos(a) {
+  const story = state.story;
+  if (!story || story.phase !== 'reading' || !storyAudioSrc) return;
+  if (!Number.isFinite(a.currentTime) || a.currentTime < 3) return;
+  try {
+    localStorage.setItem(
+      STORY_POS_KEY,
+      JSON.stringify({ url: storyAudioSrc, seq: story.seq || 0, pos: a.currentTime, at: Date.now() }),
+    );
+  } catch {
+    /* 存不下就算了 */
+  }
+}
+
+function restoreStoryPos(a) {
+  const story = state.story;
+  if (!story) return;
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(STORY_POS_KEY) || 'null');
+  } catch {
+    return;
+  }
+  if (!saved || saved.url !== storyAudioSrc) return;
+  /* 换了场（从头再来 / 换了一本）就别跳回去 */
+  if (Number(saved.seq || 0) !== Number(story.seq || 0)) return;
+  if (Date.now() - Number(saved.at || 0) > 6 * 3600_000) return;
+  const pos = Number(saved.pos) || 0;
+  if (pos < 5) return;
+  if (Number.isFinite(a.duration) && a.duration > 0 && pos > a.duration - 10) return;
+  try {
+    a.currentTime = pos;
+  } catch {
+    /* 有的格式不让 seek，那就从头放 */
+  }
+}
 
 function storyInfoText(story, mode) {
   if (mode === 'characters') {
@@ -532,11 +620,40 @@ function restoreStoryDisplay() {
   setStoryDisplayMode('story');
 }
 
+/* 插播弹幕回复时正文会停一会儿，把这段暂停报给服务端：
+ * 看门狗是按「这一章该念多久」判章节结束的，不报就会被几条插播骗过去，直接跳章。 */
+function reportStoryPaused(paused) {
+  if (paused && (!state.story || state.story.phase !== 'reading')) return;
+  fetch(`${SERVER}/api/novel/pause`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ paused }),
+  }).catch(() => {});
+}
+
+/* 页面关掉时正文正停着，替服务端把暂停结掉，别让它一直等 */
+window.addEventListener('pagehide', () => {
+  if (!storyPausedForReply) return;
+  try {
+    navigator.sendBeacon(
+      '/api/novel/pause',
+      new Blob([JSON.stringify({ paused: false })], { type: 'application/json' }),
+    );
+  } catch {
+    /* 老浏览器没有 sendBeacon 就算了，服务端 5 分钟后自己放开 */
+  }
+});
+
 function storyAdvance() {
   const key = storyAudioSrc;
   if (!key || storyAudioDone === key) return;
   restoreStoryDisplay();
   storyAudioDone = key;
+  try {
+    localStorage.removeItem(STORY_POS_KEY); /* 这一章念完了，下次别再跳回来 */
+  } catch {
+    /* 无所谓 */
+  }
   fetch(`${SERVER}/api/novel/advance`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -550,6 +667,8 @@ if (el.storyAudio) {
   el.storyAudio.addEventListener('ended', storyAdvance);
 /* 页面读到真实时长后回填，服务端看门狗按真实时长兜底 */
 el.storyAudio.addEventListener('loadedmetadata', () => {
+  /* 刷新/重开窗口后接着上次念到的位置（同一章、同一场才跳） */
+  restoreStoryPos(el.storyAudio);
   const d = Number(el.storyAudio.duration);
   if (!Number.isFinite(d) || d <= 0) return;
   if (el.storyAudio.currentSrc && el.storyAudio.currentSrc.includes('api/voice/')) {
@@ -568,6 +687,11 @@ el.storyAudio.addEventListener('loadedmetadata', () => {
     const story = state.story;
     if (!story || story.phase !== 'reading') return;
     const a = el.storyAudio;
+    /* 每 5 秒记一次进度，刷新后能接着念 */
+    if (!a.paused && Date.now() - (rememberStoryPos.at || 0) > 5000) {
+      rememberStoryPos.at = Date.now();
+      rememberStoryPos(a);
+    }
     if (!a.duration || !bubble) return;
     state.storyProgressRatio = Math.max(0, Math.min(1, a.currentTime / a.duration));
     if (state.storyDisplayMode !== 'story' || a.currentTime < STORY_SCROLL_DELAY_SEC) return;
@@ -579,16 +703,32 @@ el.storyAudio.addEventListener('loadedmetadata', () => {
   });
 }
 
-function syncStoryAudio(story) {
+function syncStoryAudio(story, { resume = false } = {}) {
   if (!el.storyAudio) return;
   const url = story.phase === 'reading' && story.audioUrl ? new URL(story.audioUrl, location.origin).href : '';
   if (!url) {
     if (!el.storyAudio.paused) el.storyAudio.pause();
     return;
   }
+  /* 暂停等回复时，如果是同一段音频就别动它；但换章了必须换源，
+   * 否则这一章的音频永远加载不上来，页面就一直哑着。 */
+  if (storyPausedForReply && url === storyAudioSrc) return;
   if (url === storyAudioSrc) {
-    if (el.storyAudio.paused && !el.storyAudio.ended && el.storyAudio.currentTime === 0) {
-      el.storyAudio.play().catch(() => {});
+    /* 同一章：刷新、停下再开始、换音色之后，音频元素经常停在中间没在放。
+     * 以前只有 currentTime===0 或显式 resume 才续播，于是正文就那么一直哑着
+     * （听起来像「语音合成不出来」，其实文件早就在了）。只要服务端说在朗读、
+     * 又不是「暂停等回复」，就把它续上。 */
+    if (el.storyAudio.paused && !el.storyAudio.ended && !storyPausedForReply) {
+      el.storyAudio.play().catch(() => {
+        if (el.voiceHint) {
+          el.voiceHint.hidden = false;
+          el.voiceHint.textContent = '🔊 点一下，开始念这一章';
+          el.voiceHint.onclick = () => {
+            el.storyAudio.play().catch(() => {});
+            el.voiceHint.hidden = true;
+          };
+        }
+      });
     }
     return;
   }
@@ -596,6 +736,7 @@ function syncStoryAudio(story) {
   storyAudioDone = '';
   el.storyAudio.src = url;
   el.storyAudio.volume = Number(state.voiceVolume ?? 0.8);
+  if (storyPausedForReply) return; /* 先把音频备好，等回复播完再开声 */
   el.storyAudio.play().catch(() => {
     if (el.voiceHint) {
       el.voiceHint.hidden = false;
@@ -607,6 +748,19 @@ function syncStoryAudio(story) {
     }
   });
 }
+
+/* 兜底：标记说「暂停等回复」，但回复早就不响了，说明这个状态卡住了
+ * （比如回复音频被后面一句顶掉，ended 回调没轮上执行）——自己纠正回来，
+ * 不然正文会一直哑着，看起来就像「没有语音」。 */
+setInterval(() => {
+  if (!storyPausedForReply) return;
+  if (Date.now() - storyPausedAt < 8000) return; /* 刚暂停，给回复留点启动时间 */
+  if (el.voicePlayer && !el.voicePlayer.paused && !el.voicePlayer.ended) return;
+  storyPausedForReply = false;
+  storyPausedAt = 0;
+  reportStoryPaused(false);
+  if (state.story) syncStoryAudio(state.story, { resume: true });
+}, 4000);
 
 function archiveNode(a) {
   const box = document.createElement('div');
@@ -841,6 +995,7 @@ function renderSong(song) {
     const src = new URL(cur.url, location.origin).href;
     if (el.player.src !== src) {
       el.player.src = src;
+      el.player.dataset.retry = '0'; /* 换了地址，重解析次数重新算 */
       /* 别把「静音开播」的临时状态带过来：换歌一律先解除静音、音量回到设置值 */
       el.player.muted = false;
       el.player.volume = Number(state.musicVolume ?? 0.2);
@@ -962,6 +1117,16 @@ function initPlayer() {
     if (!el.player.getAttribute('src')) return;
     el.srcTag.textContent = '播放失败';
     el.srcTag.classList.add('err');
+    /* 网易云直链带有效期（几小时就过期），播久了、或者队列里躺久了会 403。
+     * 以前这里只显示「播放失败」就不管了，表现就是「说进队列了但不放歌」。
+     * 同一条 src 最多自动重解析两次，避免死循环。 */
+    const tries = Number(el.player.dataset.retry || 0);
+    if (tries >= 2) return;
+    el.player.dataset.retry = String(tries + 1);
+    console.warn(`[music] 播放失败，重新解析地址（第 ${tries + 1} 次）`);
+    setTimeout(() => {
+      fetch(`${SERVER}/api/music/resolve`, { method: 'POST' }).catch(() => {});
+    }, 1200 * (tries + 1));
   });
 }
 

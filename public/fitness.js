@@ -5,6 +5,8 @@
  * - 动作演示：Canvas 2D 骨骼小人，按动作模式（pattern）做关键帧循环
  * - 讲解：服务端合成好的语音 url 直接播；没有就自己请求 /api/voice/say
  */
+import { createPetLipSync } from './pet-lip-sync.js';
+
 const SERVER = location.origin;
 const $ = (id) => document.getElementById(id);
 
@@ -73,6 +75,7 @@ const MOODS = {
 };
 
 /* ================= 语音 ================= */
+const watchVoice = createPetLipSync(el.pet);
 const voiceQueue = [];
 let voicePlaying = false;
 
@@ -91,8 +94,10 @@ function pumpVoice() {
   if (voicePlaying || !voiceQueue.length) return;
   voicePlaying = true;
   const { a, resolve } = voiceQueue.shift();
+  const stopWatching = watchVoice(a);
   el.voiceHint.textContent = '讲解中…';
   const done = () => {
+    stopWatching();
     voicePlaying = false;
     el.voiceHint.textContent = '在听弹幕…';
     resolve();

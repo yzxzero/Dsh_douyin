@@ -21,7 +21,9 @@ from misaki import zh  # noqa: E402
 from kokoro_onnx import Kokoro  # noqa: E402
 
 g2p = zh.ZHG2P()
-phonemes, _tokens = g2p(text)
+_out = g2p(text)
+# misaki 老版本返回 (phonemes, tokens)，0.7 之后直接返回字符串，两边都认
+phonemes = _out[0] if isinstance(_out, (tuple, list)) else _out
 
 k = Kokoro(os.path.join(ROOT, "model_quantized.onnx"), os.path.join(ROOT, "voices.npz"))
 audio, sr = k.create(phonemes, voice=voice, speed=speed, is_phonemes=True)

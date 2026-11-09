@@ -91,6 +91,11 @@ function launch(url, { profile, port, size, pos }) {
     CHROME,
     [
       '--autoplay-policy=no-user-gesture-required',
+      // 人物是 webm 视频：不关硬件解码，OBS/直播伴侣的窗口采集抓不到这一层
+      '--disable-accelerated-video-decode',
+      '--disable-features=CalculateNativeWinOcclusion',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
       `--app=${url}`,
       `--window-size=${size}`,
       `--window-position=${pos}`,

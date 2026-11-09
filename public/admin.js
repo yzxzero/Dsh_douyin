@@ -75,6 +75,10 @@
   }
 
   function fillConfig(c) {
+    const voiceIdInput = $('voMinimaxVoice');
+    if (voiceIdInput.value === (cfg?.voice?.minimaxVoice || '')) {
+      voiceIdInput.value = c.voice?.minimaxVoice || '';
+    }
     cfg = c;
     if (document.activeElement !== $('apiKey')) {
       $('apiKey').value = '';
@@ -94,6 +98,18 @@
     }
     paintMinimaxKeyState(c.voice?.minimaxHasKey);
     $('autoReply').checked = Boolean(c.reply?.auto);
+    const gd = c.guide || {};
+    if ($('gdGreet')) {
+      $('gdGreet').checked = gd.greet !== false;
+      if (document.activeElement !== $('gdGreetGap')) $('gdGreetGap').value = gd.greetGapSec ?? 20;
+      $('gdGreetVoice').checked = gd.greetVoice !== false;
+      if ($('gdGreetReading')) $('gdGreetReading').checked = gd.greetInReading !== false;
+      $('gdTipOn').checked = Number(gd.tipEverySec ?? 60) > 0;
+      if (document.activeElement !== $('gdTipEvery')) $('gdTipEvery').value = Number(gd.tipEverySec ?? 60) || 60;
+      $('gdTipVoice').checked = gd.tipVoice === true;
+      $('gdIdleOn').checked = Number(gd.idleEverySec ?? 30) > 0;
+      if (document.activeElement !== $('gdIdleEvery')) $('gdIdleEvery').value = Number(gd.idleEverySec ?? 30) || 30;
+    }
     gifts = c.gifts || [];
     const sel = $('tGift');
     if (sel.options.length === 0) {
@@ -199,6 +215,7 @@
       $('nvAutoStart').checked = c.novel.autoStart !== false;
       $('nvEnabled').checked = c.novel.enabled !== false;
       $('nvAuto').checked = Boolean(s?.auto);
+      if (!$('nvInterruptChat').disabled) $('nvInterruptChat').checked = c.novel.interruptOnChat === true;
     }
     nvState = s || null;
     if (!s) return;
@@ -320,6 +337,27 @@
   };
 
   $('nvEnabled').onchange = () => $('nvSaveCfg').click();
+  $('nvInterruptChat').onchange = async () => {
+    const toggle = $('nvInterruptChat');
+    toggle.disabled = true;
+    try {
+      await api('/api/config', { novel: { interruptOnChat: toggle.checked } });
+      /* 插播靠的就是语音：大肥鱼不出声，这个开关等于没开 */
+      const voiceOff = cfg?.voice?.enabled === false;
+      $('nvResult').className = 'result show' + (toggle.checked && voiceOff ? ' warn' : '');
+      $('nvResult').textContent = !toggle.checked
+        ? '已关闭弹幕语音插播，朗读不会再被回复打断。'
+        : voiceOff
+          ? '已开启插播，但「大肥鱼出声」现在是关着的——先去把语音打开，才会真的出声插播。'
+          : '已开启弹幕语音插播：弹幕先边念边准备，合成好再暂停正文，回完接着念。';
+    } catch (err) {
+      $('nvResult').className = 'result show warn';
+      $('nvResult').textContent = '保存失败：' + err.message;
+    } finally {
+      toggle.disabled = false;
+      await refresh();
+    }
+  };
   $('nvAuto').onchange = async () => {
     await api('/api/novel/auto', { auto: $('nvAuto').checked });
     await refresh();
@@ -509,6 +547,36 @@
     await api('/api/event', { kind: 'enter', username: $('tName').value.trim() || '测试观众', source: 'admin' });
   };
 
+  /* ---------- 互动引导：进房欢迎 + 定时功能提示 ---------- */
+  $('gdSave').onclick = async () => {
+    const everyOn = $('gdTipOn').checked;
+    const every = everyOn ? Math.max(20, Number($('gdTipEvery').value) || 60) : 0;
+    const idle = $('gdIdleOn').checked ? Math.max(15, Number($('gdIdleEvery').value) || 30) : 0;
+    try {
+      const d = await api('/api/config', {
+        patch: {
+          guide: {
+            greet: $('gdGreet').checked,
+            greetGapSec: Math.max(5, Number($('gdGreetGap').value) || 20),
+            greetVoice: $('gdGreetVoice').checked,
+            greetInReading: $('gdGreetReading') ? $('gdGreetReading').checked : true,
+            tipEverySec: every,
+            tipVoice: $('gdTipVoice').checked,
+            idleEverySec: idle,
+          },
+        },
+      });
+      fillConfig(d.config);
+      $('gdResult').className = 'result show';
+      $('gdResult').textContent = `已保存：进房欢迎${$('gdGreet').checked ? '开' : '关'}（至少隔 ${Math.max(5, Number($('gdGreetGap').value) || 20)} 秒），${
+        every ? `每 ${every} 秒一条功能提示` : '功能提示已关'
+      }，${idle ? `${idle} 秒没人说话就暖一句` : '不主动暖场'}。`;
+    } catch (err) {
+      $('gdResult').className = 'result show warn';
+      $('gdResult').textContent = '保存失败：' + err.message;
+    }
+  };
+
   $('resetLive').onclick = async () => {
     if (!confirm('清空直播画面上的所有弹幕和点歌队列？（小说进度、礼物收益、token 统计都保留）')) return;
     $('resetLiveHint').textContent = '正在清场…';
@@ -606,6 +674,7 @@
     $('voRate').value = String(v.rate ?? 1);
     const key = `${v.engine || 'edge'}:${v.engine === 'sapi' ? 'sapi' : v.preset || 'natural'}`;
     if (VOICE_ENGINES[key]) $('voEngine').value = key;
+    if ($('voChapterEngine')) $('voChapterEngine').value = v.chapterEngine || '';
     const preset = v.engine === 'kokoro'
       ? (v.kokoro || {})[v.preset]
       : v.engine === 'minimax'
@@ -614,7 +683,9 @@
     const label =
       v.engine === 'sapi'
         ? `系统语音 · ${v.name || 'Huihui'}`
-        : `${preset?.label || v.preset || ''} · ${preset?.voiceId || preset?.voice || v.name || ''}${preset?.note ? ` · ${preset.note}` : ''}${v.engine === 'minimax' && v.minimaxHasKey === false ? ' · 未配置 API Key' : ''}`;
+        : v.engine === 'minimax'
+          ? `MiniMax · ${(cfg ? cfg.voice?.minimaxVoice : v.minimaxVoice) || preset?.voiceId || v.minimax?.lyrical?.voiceId || ''}${v.minimaxHasKey === false ? ' · 未配置 API Key' : ''}`
+          : `${preset?.label || v.preset || ''} · ${preset?.voiceId || preset?.voice || v.name || ''}${preset?.note ? ` · ${preset.note}` : ''}`;
     $('voName').textContent = label;
     paintMinimaxKeyState(v.minimaxHasKey);
     if (v.lastError) $('voResult').textContent = `上次出错：${v.lastError}`;
@@ -643,6 +714,20 @@
   $('voEnabled').onchange = () => saveVoice();
   $('voRate').onchange = () => saveVoice();
   $('voEngine').onchange = () => saveVoice();
+  if ($('voChapterEngine')) {
+    $('voChapterEngine').onchange = async () => {
+      const value = $('voChapterEngine').value;
+      try {
+        const d = await api('/api/config', { patch: { voice: { chapterEngine: value } } });
+        fillConfig(d.config);
+        $('voResult').textContent = value
+          ? `正文朗读已改用「${$('voChapterEngine').selectedOptions[0].textContent}」，弹幕回复仍走上面的音色。`
+          : '正文朗读跟随上面的音色。';
+      } catch (err) {
+        $('voResult').textContent = `保存失败：${err.message}`;
+      }
+    };
+  }
   $('voList').onclick = () => loadVoice();
 
   $('saveMinimaxKey').onclick = async () => {
@@ -667,6 +752,35 @@
       $('voMinimaxKeyState').classList.add('warn');
     } finally {
       button.disabled = false;
+    }
+  };
+
+  $('saveMinimaxVoice').onclick = async () => {
+    const input = $('voMinimaxVoice');
+    const button = $('saveMinimaxVoice');
+    const status = $('voMinimaxVoiceState');
+    const voiceId = input.value.trim();
+    const voice = { minimaxVoice: voiceId };
+    if (voiceId) {
+      const selected = VOICE_ENGINES[$('voEngine').value];
+      voice.engine = 'minimax';
+      voice.preset = selected?.engine === 'minimax' ? selected.preset : 'lyrical';
+    }
+
+    input.disabled = button.disabled = true;
+    status.textContent = '正在保存…';
+    status.classList.remove('warn');
+    try {
+      const d = await api('/api/config', { patch: { voice } });
+      fillConfig(d.config);
+      input.value = d.config.voice?.minimaxVoice || '';
+      await loadVoice();
+      status.textContent = voiceId ? '已保存，可点击试听' : '已恢复使用预设音色';
+    } catch (e) {
+      status.textContent = `保存失败：${e.message}`;
+      status.classList.add('warn');
+    } finally {
+      input.disabled = button.disabled = false;
     }
   };
 
@@ -829,6 +943,10 @@
       $('muVolumeVal').textContent = pct(m.volume);
     }
     if (m.apiBase != null) $('muApiBase').value = m.apiBase;
+    if ($('muAutoPlaylist')) {
+      $('muAutoPlaylist').checked = m.autoPlaylist !== false;
+      if (document.activeElement !== $('muPlaylistId')) $('muPlaylistId').value = m.playlistId || '';
+    }
     $('muStatus').textContent = `本地曲库 ${m.tracks ?? 0} 首 · 音源 ${m.provider || 'auto'}`;
     paintMember(m);
   }
@@ -874,6 +992,37 @@
       previewState(on ? '已开启：放歌/念新章时会自动把系统音量抬到 60%' : '已关闭：不再自动改系统音量');
     };
   }
+
+  /* 没人点歌时的循环歌单 */
+  $('muSavePlaylist').onclick = async () => {
+    const raw = $('muPlaylistId').value.trim();
+    const box = $('muPlaylistState');
+    box.textContent = '保存中…';
+    box.classList.remove('warn');
+    try {
+      const d = await api('/api/config', {
+        patch: { music: { playlistId: raw, autoPlaylist: $('muAutoPlaylist').checked } },
+      });
+      fillConfig(d.config);
+      await loadMusic();
+      if (!raw) {
+        box.textContent = '已清空歌单：没人点歌时就安静着。';
+        return;
+      }
+      const info = await fetch(`/api/music/playlist?id=${encodeURIComponent(raw)}`)
+        .then((r) => r.json())
+        .catch(() => ({ ok: false, error: '接口没响应' }));
+      if (info.ok) {
+        box.textContent = `已保存：歌单 ${info.count} 首${info.head?.length ? `（${info.head.slice(0, 3).join('、')}…）` : ''}，队列空了就按顺序循环放。`;
+      } else {
+        box.classList.add('warn');
+        box.textContent = `已保存，但歌单读不到：${info.error || '未知原因'}（多半是私密歌单没登录，或 cookie 过期）`;
+      }
+    } catch (err) {
+      box.classList.add('warn');
+      box.textContent = '保存失败：' + err.message;
+    }
+  };
 
   $('muSave').onclick = async () => {
     await api('/api/config', {

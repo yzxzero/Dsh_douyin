@@ -125,6 +125,13 @@
         <span class="slider-val" id="muVolumeVal">75%</span>
       </div>
       <div class="row">
+        <label>没人点歌时</label>
+        <label class="switch"><input id="muAutoPlaylist" type="checkbox" /> 循环放我的歌单</label>
+        <input id="muPlaylistId" placeholder="歌单链接或 ID，例如 5321761461" style="flex:1;min-width:180px" />
+        <button id="muSavePlaylist" class="primary">保存</button>
+      </div>
+      <div class="hint" id="muPlaylistState">—</div>
+      <div class="row">
         <label>试听 / 排障</label>
         <button id="muPreviewBtn" class="primary">▶ 试听当前这首歌</button>
         <button id="muPreviewStop">■ 停止</button>
@@ -191,12 +198,30 @@
         </select>
       </div>
       <div class="row">
+        <label>念正文用</label>
+        <select id="voChapterEngine" style="width:230px">
+          <option value="">跟随上面的音色</option>
+          <option value="minimax">MiniMax（在线，最快）</option>
+          <option value="edge">edge 晓晓（在线，免费）</option>
+          <option value="kokoro">本地 Kokoro（不联网，但慢）</option>
+          <option value="sapi">系统 SAPI（离线）</option>
+        </select>
+        <span class="hint">整章几千字，本地合成约 1.5× 实时（一章要几十分钟）；弹幕短句用本地、正文用在线音色最省事。</span>
+      </div>
+      <div class="row">
         <label for="voMinimaxKey">MiniMax Key</label>
         <input id="voMinimaxKey" type="password" placeholder="粘贴 MiniMax API Key" autocomplete="new-password" />
         <button id="saveMinimaxKey" class="primary">保存 Key</button>
         <span class="hint" id="voMinimaxKeyState" role="status">未配置</span>
       </div>
       <p class="hint">Key 只用于本机 MiniMax 合成；保存后不会在页面回显。若设置了 <code>MINIMAX_API_KEY</code> 环境变量，它优先于这里保存的 Key。</p>
+      <div class="row">
+        <label for="voMinimaxVoice">MiniMax Voice ID</label>
+        <input id="voMinimaxVoice" type="text" placeholder="例如 female-yujie" autocomplete="off" spellcheck="false" />
+        <button id="saveMinimaxVoice" class="primary">保存音色 ID</button>
+        <span class="hint" id="voMinimaxVoiceState" role="status"></span>
+      </div>
+      <p class="hint">填入 ID 并保存后会切换到 MiniMax；清空并保存可恢复下拉框的 MiniMax 预设。<a href="https://platform.minimax.cn/docs/faq/system-voice-id" target="_blank" rel="noopener noreferrer">查看官方音色列表</a></p>
       <div class="row">
         <label>音色细节</label>
         <span class="hint" id="voName" style="flex:1;min-width:0"></span>
@@ -229,6 +254,38 @@
     </section>
 
     <section class="panel">
+      <h2>互动引导</h2>
+      <p class="hint">
+        有人进直播间就欢迎一句；另外每隔一段时间发一条「怎么玩」的提示（点歌、切歌、查看角色、选题…）。
+        朗读/准备正文时只发文字不出声，不会打断正在念的内容。
+      </p>
+      <div class="row">
+        <label class="inline"><input id="gdGreet" type="checkbox" /> 进房打招呼</label>
+        <label>间隔</label>
+        <input id="gdGreetGap" type="number" min="5" max="600" step="5" style="width:90px" /> 秒
+        <label class="inline"><input id="gdGreetVoice" type="checkbox" /> 出声</label>
+        <label class="inline"><input id="gdGreetReading" type="checkbox" /> 念正文时也念名字</label>
+      </div>
+      <div class="row">
+        <label>功能提示</label>
+        <label class="inline"><input id="gdTipOn" type="checkbox" /> 每隔</label>
+        <input id="gdTipEvery" type="number" min="20" max="1800" step="10" style="width:90px" /> 秒发一条
+        <label class="inline"><input id="gdTipVoice" type="checkbox" /> 出声</label>
+        <button id="gdSave" class="primary">保存</button>
+      </div>
+      <div class="row">
+        <label>冷场暖场</label>
+        <label class="inline"><input id="gdIdleOn" type="checkbox" /> 每隔</label>
+        <input id="gdIdleEvery" type="number" min="15" max="600" step="5" style="width:90px" /> 秒没人说话就主动说一句
+      </div>
+      <span class="hint">
+        提示内容轮流来，不重复；填 0 或关掉「每隔」就不发。人多时欢迎会合并成一句。
+        暖场那句会让模型按当前情境现编（没 Key 或超时就用固定词），**会出声**；念正文期间不算冷场，不插嘴。
+      </span>
+      <div class="result" id="gdResult"></div>
+    </section>
+
+    <section class="panel">
       <h2>重置直播间</h2>
       <p class="hint">
         清空直播画面上的所有弹幕、点歌队列（正在播的那首也会停），以及发送箱和待回复队列。
@@ -256,6 +313,12 @@
         <button id="nvSaveCfg" class="primary">保存</button>
         <label class="inline"><input id="nvEnabled" type="checkbox" /> 启用朗读</label>
         <label class="inline"><input id="nvAuto" type="checkbox" /> 自动往下</label>
+      </div>
+      <div class="row">
+        <label class="inline"><input id="nvInterruptChat" type="checkbox" /> 朗读时插播弹幕回复</label>
+        <span class="hint">
+          开着的时候，有弹幕就边念边准备回复，语音合成好了才暂停正文，回完从原位置接着念；连续弹幕沿用回复频率限制（最小间隔 / 每分钟上限），不会一直打断。
+        </span>
       </div>
 
       <div class="row">
