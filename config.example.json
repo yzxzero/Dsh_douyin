@@ -1,4 +1,5 @@
 {
+  "agent": { "enabled": true },
   "port": 8787,
   "roomId": "",
   "danmaku": {
@@ -62,7 +63,7 @@
   "broadcast": {
     "enabled": false,
     "timezone": "Asia/Shanghai",
-    "defaultMode": "story",
+    "defaultMode": "chat",
     "schedule": [
       {
         "id": "fitness-afternoon",
@@ -83,7 +84,7 @@
     ]
   },
   "novel": {
-    "enabled": true,
+    "enabled": false,
     "auto": true,
     "dir": "短篇",
     "breakSec": 300,
@@ -265,9 +266,9 @@
     "enabled": true,
     "volume": 0.9,
     "rate": 1,
-    "engine": "minimax",
+    "engine": "edge",
     "voice": "Microsoft Huihui Desktop",
-    "preset": "cuteGirl",
+    "preset": "xiaoyi",
     "minimaxVoice": "cute_girl",
     "minimaxModel": "speech-2.8-hd",
     "minimaxEmotion": "happy",
@@ -275,7 +276,12 @@
     "minimaxPitch": 0,
     "duck": 1,
     "minimaxApiKey": "",
-    "apiKey": ""
+    "apiKey": "",
+    "chapterEngine": "",
+    "edgeVoice": "",
+    "effect": "electro",
+    "edgePythonPath": "",
+    "ffmpegPath": ""
   },
   "audio": {
     "autoVolume": false,

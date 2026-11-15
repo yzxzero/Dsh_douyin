@@ -1,13 +1,13 @@
 const portrait = new URL('./assets/pet/speaking.png', import.meta.url);
 
-export function createPetLipSync(pet, { cover = false } = {}) {
+export function createPetLipSync(pet, { cover = false, keyboard = false } = {}) {
   if (!window.AudioContext) return () => () => {};
 
   // 沿用原画的坐标系，嘴型和人物一起缩放，分别匹配两个直播间的视频裁切。
   pet.insertAdjacentHTML('afterend', `
     <svg class="pet pet-speaking" viewBox="0 0 640 360"
       preserveAspectRatio="${cover ? 'xMidYMax slice' : 'xMidYMid meet'}"
-      aria-hidden="true" style="position:absolute; inset:0; pointer-events:none; display:none">
+      aria-hidden="true" style="position:absolute; inset:var(--pet-inset, 0); pointer-events:none; display:none">
       <defs>
         <radialGradient id="pet-smile-color" cx="51%" cy="75%" r="74%">
           <stop offset="0" stop-color="#dc9b9a"/>
@@ -34,6 +34,15 @@ export function createPetLipSync(pet, { cover = false } = {}) {
   `);
   const avatar = pet.nextElementSibling;
   const mouth = avatar.querySelector('[data-mouth]');
+  const portraitLayer = avatar.querySelector('image');
+  const breathing = avatar.querySelector('animateTransform');
+  if (keyboard) {
+    // keyboard.webm 取写代码素材 2–3.25 秒往返循环：脸部位置稳定，手部继续打字。
+    // 口型只覆盖原嘴，不替换身体，也不叠加独立的呼吸位移。
+    mouth.insertAdjacentHTML('beforebegin', '<ellipse data-mouth-cover cx="0" cy="0" rx="10" ry="5" fill="#f2d9ca" opacity="0"/>');
+  }
+  const mouthCover = avatar.querySelector('[data-mouth-cover]');
+  let keyboardPose = false;
   let portraitReady = false;
   const image = new Image();
   image.onload = () => { portraitReady = true; };
@@ -47,10 +56,9 @@ export function createPetLipSync(pet, { cover = false } = {}) {
   let visible = false;
 
   function showSpeaking(show) {
-    if (show === visible) return;
     visible = show;
     avatar.style.display = show ? '' : 'none';
-    pet.style.visibility = show ? 'hidden' : '';
+    pet.style.visibility = show && !keyboardPose ? 'hidden' : '';
   }
 
   function unlock() {
@@ -83,6 +91,20 @@ export function createPetLipSync(pet, { cover = false } = {}) {
 
   function render() {
     frame = 0;
+    const nextKeyboardPose = keyboard && /\/keyboard\.webm(?:[?#]|$)/.test(pet.currentSrc);
+    if (nextKeyboardPose !== keyboardPose) {
+      keyboardPose = nextKeyboardPose;
+      portraitLayer.style.display = keyboardPose ? 'none' : '';
+      // SVG 的呼吸位移只作用于普通说话头像，不能带动敲键盘口型漂移。
+      if (keyboardPose) {
+        breathing.remove();
+        portraitLayer.parentElement.setAttribute('transform', 'translate(0 0)');
+      } else {
+        portraitLayer.parentElement.prepend(breathing);
+      }
+      mouth.parentElement.setAttribute('transform', keyboardPose ? 'translate(311 211) scale(.68)' : 'translate(307.5 207)');
+      avatar.style.filter = keyboardPose ? 'none' : '';
+    }
     let rms = 0;
     let hasVoice = false;
     for (const track of playing) {
@@ -100,11 +122,13 @@ export function createPetLipSync(pet, { cover = false } = {}) {
 
     const target = Math.min(1, Math.sqrt(Math.max(0, rms - 0.008) * 8));
     opening = hasVoice ? opening + (target - opening) * (target > opening ? 0.6 : 0.32) : 0;
-    if (hasVoice && portraitReady) {
+    if (hasVoice && (keyboardPose || portraitReady)) {
       mouth.setAttribute('opacity', opening > 0.09 ? '1' : '0');
+      mouthCover?.setAttribute('opacity', keyboardPose && opening > 0.09 ? '1' : '0');
       mouth.setAttribute('transform', `scale(${0.72 + opening * 0.28} ${0.15 + opening * 0.85})`);
     }
-    showSpeaking(hasVoice && portraitReady);
+    const matchingPose = pet.dataset.giftAction !== '1' && pet.readyState >= 2 && pet.style.display !== 'none';
+    showSpeaking(hasVoice && (keyboardPose || portraitReady) && matchingPose);
     if (playing.size) frame = requestAnimationFrame(render);
   }
 

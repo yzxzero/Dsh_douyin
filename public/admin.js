@@ -5,6 +5,19 @@
 
   let gifts = [];
   let cfg = null;
+  let mdSettingsDirty = false;
+  let savingGameplay = false;
+  let startingGame = false;
+  function renderGameplay() {
+    const enabled=cfg?.gameplay?.enabled!==false;
+    if(!savingGameplay)$('mdEnabled').checked=enabled;
+    for(const id of ['mdStart','mdPause','mdResume','mdAutoOff','fitShowGame'])
+      $(id).disabled=!enabled || savingGameplay || id==='mdStart' && startingGame;
+  }
+  let pendingPetScale = null;
+  let savingPetScale = false;
+  let petScaleTimer = null;
+  let pendingStoryPetScale = null, savingStoryPetScale = false, storyPetScaleTimer = null;
 
   async function api(path, body, method = 'POST') {
     const res = await fetch(path, {
@@ -80,6 +93,24 @@
       voiceIdInput.value = c.voice?.minimaxVoice || '';
     }
     cfg = c;
+    renderGameplay();
+    if(!mdSettingsDirty){
+    const md=c.luanti || {};
+    if(document.activeElement!==$('mdAutoStart'))$('mdAutoStart').checked=md.autoStart!==false;
+    if(document.activeElement!==$('mdAudience'))$('mdAudience').checked=md.audienceControl!==false;
+    for(const [id,value] of [['mdIdleStart',(md.idleStartSec??300)/60],['mdMaxWait',(md.maxWaitSec??600)/60],['mdRoundGap',(md.roundGapSec??600)/60],['mdIdleTalk',md.idleTalkSec??60]])
+      if(document.activeElement!==$(id))$(id).value=value;
+    }
+    if (!savingPetScale && pendingPetScale === null && !petScaleTimer && document.activeElement !== $('petScale')) {
+      const value = Number(c.scene?.petScale ?? 1);
+      $('petScale').value = Math.round((Number.isFinite(value) ? Math.max(.5, Math.min(1.5, value)) : 1) * 100);
+      $('petScaleValue').textContent = $('petScale').value + '%';
+    }
+    if (!savingStoryPetScale && pendingStoryPetScale === null && !storyPetScaleTimer && document.activeElement !== $('storyPetScale')) {
+      const value = Number(c.scene?.storyPetScale ?? 1);
+      $('storyPetScale').value = Math.round((Number.isFinite(value) ? Math.max(.5, Math.min(1.5, value)) : 1) * 100);
+      $('storyPetScaleValue').textContent = $('storyPetScale').value + '%';
+    }
     if (document.activeElement !== $('apiKey')) {
       $('apiKey').value = '';
       $('apiKey').placeholder = c.ai.hasKey ? '已保存（留空则不改）' : 'sk-...';
@@ -98,6 +129,8 @@
     }
     paintMinimaxKeyState(c.voice?.minimaxHasKey);
     $('autoReply').checked = Boolean(c.reply?.auto);
+    if ($('likeVoice')) $('likeVoice').checked = c.reply?.likeVoice !== false;
+    if ($('likeInReading')) $('likeInReading').checked = c.reply?.likeInReading !== false;
     const gd = c.guide || {};
     if ($('gdGreet')) {
       $('gdGreet').checked = gd.greet !== false;
@@ -107,6 +140,9 @@
       $('gdTipOn').checked = Number(gd.tipEverySec ?? 60) > 0;
       if (document.activeElement !== $('gdTipEvery')) $('gdTipEvery').value = Number(gd.tipEverySec ?? 60) || 60;
       $('gdTipVoice').checked = gd.tipVoice === true;
+      $('gdIdleMusic').checked = gd.idleMusic !== false;
+      if (document.activeElement !== $('gdIdleMusicEvery')) $('gdIdleMusicEvery').value = gd.idleMusicEverySec ?? 600;
+      if (document.activeElement !== $('gdTopicNotes')) $('gdTopicNotes').value = gd.topicNotes || '';
       $('gdIdleOn').checked = Number(gd.idleEverySec ?? 30) > 0;
       if (document.activeElement !== $('gdIdleEvery')) $('gdIdleEvery').value = Number(gd.idleEverySec ?? 30) || 30;
     }
@@ -128,6 +164,8 @@
       st.__balance = d.balance && typeof d.balance.total === 'number' ? money(d.balance.total) : '—';
       render(d.config, st);
       renderBoard(d);
+      const autoState=d.luantiSession || (await api('/api/luanti/state',null,'GET')).session;
+      $('mdAutoState').textContent=autoState?.autoStatus?.message || '服务尚未返回开局状态，请重启服务以加载新版自动流程。';
       renderLog(d.events);
       if (d.aiError) {
         $('aiHealth').className = 'result show warn';
@@ -214,6 +252,8 @@
       if (document.activeElement !== $('nvStartAt')) $('nvStartAt').value = c.novel.startAt || '';
       $('nvAutoStart').checked = c.novel.autoStart !== false;
       $('nvEnabled').checked = c.novel.enabled !== false;
+      $('storyTab').hidden = !$('nvEnabled').checked;
+      $('fitShowStory').hidden = !$('nvEnabled').checked;
       $('nvAuto').checked = Boolean(s?.auto);
       if (!$('nvInterruptChat').disabled) $('nvInterruptChat').checked = c.novel.interruptOnChat === true;
     }
@@ -371,6 +411,113 @@
     await refresh();
   };
 
+  async function savePetScale() {
+    clearTimeout(petScaleTimer); petScaleTimer = null;
+    if (savingPetScale) return;
+    savingPetScale = true;
+    try {
+      while (pendingPetScale !== null) {
+        const value = pendingPetScale;
+        pendingPetScale = null;
+        await api('/api/config', { scene: { petScale: value } });
+        $('petScaleResult').className = 'result show';
+        $('petScaleResult').textContent = '已保存，人物和嘴型同步缩放至 ' + Math.round(value * 100) + '%。';
+      }
+    } catch (err) {
+      $('petScaleResult').className = 'result show warn';
+      $('petScaleResult').textContent = '保存失败：' + err.message + '，请重新拖动滑块重试。';
+    } finally {
+      savingPetScale = false;
+      if (pendingPetScale !== null) savePetScale();
+    }
+  }
+  $('petScale').oninput = () => {
+    $('petScaleValue').textContent = $('petScale').value + '%';
+    pendingPetScale = Number($('petScale').value) / 100;
+    clearTimeout(petScaleTimer);
+    petScaleTimer = setTimeout(savePetScale, 120);
+  };
+  $('petScale').onchange = () => {
+    pendingPetScale = Number($('petScale').value) / 100;
+    savePetScale();
+  };
+  $('petScaleReset').onclick = () => {
+    $('petScale').value = 100;
+    $('petScaleValue').textContent = '100%';
+    pendingPetScale = 1;
+    savePetScale();
+  };
+
+  async function saveStoryPetScale() {
+    clearTimeout(storyPetScaleTimer); storyPetScaleTimer = null;
+    if (savingStoryPetScale) return;
+    savingStoryPetScale = true;
+    try {
+      while (pendingStoryPetScale !== null) {
+        const value = pendingStoryPetScale;
+        pendingStoryPetScale = null;
+        await api('/api/config', { scene: { storyPetScale: value } });
+        $('storyPetScaleResult').className = 'result show';
+        $('storyPetScaleResult').textContent = '已保存，人物和嘴型同步缩放至 ' + Math.round(value * 100) + '%。';
+      }
+    } catch (err) {
+      $('storyPetScaleResult').className = 'result show warn';
+      $('storyPetScaleResult').textContent = '保存失败：' + err.message + '，请重新拖动滑块重试。';
+    } finally {
+      savingStoryPetScale = false;
+      if (pendingStoryPetScale !== null) saveStoryPetScale();
+    }
+  }
+  $('storyPetScale').oninput = () => {
+    $('storyPetScaleValue').textContent = $('storyPetScale').value + '%';
+    pendingStoryPetScale = Number($('storyPetScale').value) / 100;
+    clearTimeout(storyPetScaleTimer);
+    storyPetScaleTimer = setTimeout(saveStoryPetScale, 120);
+  };
+  $('storyPetScale').onchange = () => {
+    pendingStoryPetScale = Number($('storyPetScale').value) / 100;
+    saveStoryPetScale();
+  };
+  $('storyPetScaleReset').onclick = () => {
+    $('storyPetScale').value = 100;
+    $('storyPetScaleValue').textContent = '100%';
+    pendingStoryPetScale = 1;
+    saveStoryPetScale();
+  };
+
+  async function luantiAction(path, body) {
+    $('mdResult').className='result show';$('mdResult').textContent='正在处理…';
+    try { await api(path,body);$('mdResult').textContent='已完成。游戏画面会自动同步到直播页。'; }
+    catch(e) { $('mdResult').className='result show warn';$('mdResult').textContent=e.message; }
+  }
+  $('mdEnabled').onchange=async()=>{
+    const enabled=$('mdEnabled').checked;
+    savingGameplay=true;$('mdEnabled').disabled=true;renderGameplay();
+    $('mdResult').className='result show';$('mdResult').textContent=enabled?'正在允许主播玩游戏…':'正在保存并退出游戏…';
+    try{
+      const d=await api('/api/config',{gameplay:{enabled}});
+      cfg=d.config;
+      $('mdResult').textContent=enabled?'已允许主播玩游戏，自动开局仍按下方设置执行。':'已禁止主播玩游戏，恢复原场景。';
+    }catch(e){
+      // The server may already have saved the switch even if native exit failed.
+      try{cfg=(await api('/api/config',null,'GET')).config;}catch{}
+      $('mdResult').className='result show warn';$('mdResult').textContent=e.message;
+    }finally{savingGameplay=false;$('mdEnabled').disabled=false;renderGameplay();}
+  };
+  $('mdStart').onclick=async()=>{startingGame=true;renderGameplay();try{await luantiAction('/api/luanti/start',{});}finally{startingGame=false;renderGameplay();}};
+  $('mdPause').onclick=()=>luantiAction('/api/luanti/command',{action:'pause',paused:true});
+  $('mdResume').onclick=()=>luantiAction('/api/luanti/command',{action:'pause',paused:false});
+  $('mdAutoOff').onclick=()=>luantiAction('/api/luanti/command',{action:'auto',enabled:false});
+  $('mdChat').onclick=()=>luantiAction('/api/luanti/finish',{});
+  for(const id of ['mdAutoStart','mdAudience','mdIdleStart','mdRoundGap','mdMaxWait','mdIdleTalk'])$(id).addEventListener('input',()=>{mdSettingsDirty=true;});
+  $('mdSettingsSave').onclick=async()=>{
+    try {
+      const d=await api('/api/config',{luanti:{autoStart:$('mdAutoStart').checked,audienceControl:$('mdAudience').checked,
+        idleStartSec:Number($('mdIdleStart').value)*60,maxWaitSec:Number($('mdMaxWait').value)*60,roundGapSec:Number($('mdRoundGap').value)*60,idleTalkSec:Number($('mdIdleTalk').value)}});
+      mdSettingsDirty=false;fillConfig(d.config);$('mdResult').className='result show';$('mdResult').textContent='游戏流程设置已保存。';
+    }catch(e){$('mdResult').className='result show warn';$('mdResult').textContent=e.message;}
+  };
+
   // ---- 事件绑定 ----
   $('saveKey').onclick = async () => {
     const key = $('apiKey').value.trim();
@@ -392,6 +539,18 @@
   $('autoReply').onchange = async () => {
     await api('/api/config', { reply: { auto: $('autoReply').checked } });
   };
+
+  /* 点赞 / 关注答谢：出声 + 念正文时也念（插播，说完接着念正文） */
+  const saveLikeReply = async () => {
+    await api('/api/config', {
+      reply: {
+        likeVoice: $('likeVoice').checked,
+        likeInReading: $('likeInReading').checked,
+      },
+    });
+  };
+  if ($('likeVoice')) $('likeVoice').onchange = saveLikeReply;
+  if ($('likeInReading')) $('likeInReading').onchange = saveLikeReply;
 
   // 备用模型 / 备用接口：主模型 503 时自动顶上
   $('saveFallback').onclick = async () => {
@@ -563,6 +722,9 @@
             tipEverySec: every,
             tipVoice: $('gdTipVoice').checked,
             idleEverySec: idle,
+            idleMusic: $('gdIdleMusic').checked,
+            idleMusicEverySec: Math.max(60, Number($('gdIdleMusicEvery').value) || 600),
+            topicNotes: $('gdTopicNotes').value.trim().slice(0, 4000),
           },
         },
       });
@@ -652,6 +814,7 @@
   /* ---------- 声音：音乐音量 + 大肥鱼音量 ---------- */
   const pct = (v) => `${Math.round(Number(v) * 100)}%`;
   const VOICE_ENGINES = {
+    ...Object.fromEntries(['xiaoyi','yunjian','yunxi','yunxia','yunyang'].map(p=>['edge:'+p,{engine:'edge',preset:p}])),
     'sapi:sapi': { engine: 'sapi', preset: '' },
     'minimax:cuteGirl': { engine: 'minimax', preset: 'cuteGirl' },
     'minimax:lyrical': { engine: 'minimax', preset: 'lyrical' },
@@ -675,6 +838,10 @@
     const key = `${v.engine || 'edge'}:${v.engine === 'sapi' ? 'sapi' : v.preset || 'natural'}`;
     if (VOICE_ENGINES[key]) $('voEngine').value = key;
     if ($('voChapterEngine')) $('voChapterEngine').value = v.chapterEngine || '';
+    $('voEffect').value = v.effect || 'normal';
+    const edgeSelect=$('voEdgeVoice'), selected=v.edgeVoice||'';
+    if(selected && !Array.from(edgeSelect.options).some(o=>o.value===selected)){const o=new Option(selected,selected);edgeSelect.add(o);}
+    edgeSelect.value=selected;
     const preset = v.engine === 'kokoro'
       ? (v.kokoro || {})[v.preset]
       : v.engine === 'minimax'
@@ -687,6 +854,7 @@
           ? `MiniMax · ${(cfg ? cfg.voice?.minimaxVoice : v.minimaxVoice) || preset?.voiceId || v.minimax?.lyrical?.voiceId || ''}${v.minimaxHasKey === false ? ' · 未配置 API Key' : ''}`
           : `${preset?.label || v.preset || ''} · ${preset?.voiceId || preset?.voice || v.name || ''}${preset?.note ? ` · ${preset.note}` : ''}`;
     $('voName').textContent = label;
+    if(v.engine==='edge') $('voName').textContent=`${v.edgeVoice || preset?.voice || ''} · ${v.effects?.[v.effect] || '原声'}`;
     paintMinimaxKeyState(v.minimaxHasKey);
     if (v.lastError) $('voResult').textContent = `上次出错：${v.lastError}`;
   }
@@ -714,6 +882,18 @@
   $('voEnabled').onchange = () => saveVoice();
   $('voRate').onchange = () => saveVoice();
   $('voEngine').onchange = () => saveVoice();
+  $('voEffect').onchange = () => saveVoice();
+  $('voEdgeVoice').onchange = () => saveVoice();
+  $('voEdgeRefresh').onclick = async () => {
+    const button=$('voEdgeRefresh');button.disabled=true;
+    try {
+      const d=await api('/api/voice/edge/voices',null,'GET');
+      const select=$('voEdgeVoice'), value=select.value;
+      select.replaceChildren(new Option('跟随上方音色预设',''));
+      for(const v of d.voices.sort((a,b)=>(a.locale.startsWith('zh-')?0:1)-(b.locale.startsWith('zh-')?0:1)||a.name.localeCompare(b.name))) select.add(new Option(`${v.name} · ${v.gender==='Female'?'女':'男'}`,v.name));
+      select.value=value; $('voResult').textContent=`已查询到 ${d.voices.length} 个 Edge 音色。`;
+    } catch(e){$('voResult').textContent='查询失败：'+e.message;}finally{button.disabled=false;}
+  };
   if ($('voChapterEngine')) {
     $('voChapterEngine').onchange = async () => {
       const value = $('voChapterEngine').value;
@@ -785,28 +965,27 @@
   };
 
   let voiceTimer = null;
-  function saveVoice() {
-    const eng = VOICE_ENGINES[$('voEngine').value] || VOICE_ENGINES['edge:natural'];
-    clearTimeout(voiceTimer);
-    voiceTimer = setTimeout(async () => {
-      await api('/api/config', {
-        patch: {
-          voice: {
-            enabled: $('voEnabled').checked,
-            volume: Number($('voVolume').value),
-            rate: Number($('voRate').value),
-            engine: eng.engine,
-            ...(eng.preset ? { preset: eng.preset } : {}),
-          },
-        },
-      });
-      await loadVoice();
-    }, 260);
+  let voiceSave = Promise.resolve();
+  function voicePatch() {
+    const eng=VOICE_ENGINES[$('voEngine').value] || VOICE_ENGINES['edge:natural'];
+    return { enabled:$('voEnabled').checked,volume:Number($('voVolume').value),rate:Number($('voRate').value),
+      engine:eng.engine,effect:$('voEffect').value,edgeVoice:$('voEdgeVoice').value,...(eng.preset?{preset:eng.preset}:{}) };
+  }
+  function saveVoice(immediate=false) {
+    clearTimeout(voiceTimer);voiceTimer=null;
+    const commit=()=>{
+      const patch=voicePatch();
+      voiceSave=voiceSave.catch(()=>{}).then(async()=>{await api('/api/config',{patch:{voice:patch}});await loadVoice();});
+      return voiceSave;
+    };
+    if(immediate)return commit();
+    voiceTimer=setTimeout(()=>{voiceTimer=null;commit().catch(e=>{$('voResult').textContent='保存失败：'+e.message;});},260);
   }
 
   $('voTest').onclick = async () => {
     $('voResult').textContent = '正在合成试听…';
     try {
+      if(voiceTimer)await saveVoice(true);else await voiceSave;
       const d = await api('/api/voice/test', {});
       const a = new Audio(d.url);
       a.volume = Number($('voVolume').value);
@@ -1352,6 +1531,8 @@
       }
     };
     $('fitShowStory').onclick = modeBtn('story', '已切到故事间');
+    $('fitShowChat').onclick = modeBtn('chat', '已切到聊天间');
+    $('fitShowGame').onclick = modeBtn('game', '已切到游戏间');
     $('fitShowFitness').onclick = modeBtn('fitness', '已切到健身房');
     $('fitAuto').onclick = modeBtn('auto', '已恢复按时段自动');
     setInterval(() => loadFitness().catch(() => {}), 6000);
@@ -1373,3 +1554,4 @@
   refresh();
   setInterval(refresh, 4000);
 })();
+

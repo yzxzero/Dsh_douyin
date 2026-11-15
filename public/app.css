@@ -10,7 +10,7 @@
   --accent: #8fd8ff;
   --violet: #b6a6ff;
   --gold: #ffd479;
-  --bg-alpha: 0.86;
+  --bg-alpha: 1;
 
   --gap: clamp(8px, 0.8vw, 16px);
   --pad: clamp(10px, 1vw, 20px);
@@ -54,16 +54,62 @@ body.bare {
   overflow: hidden;
 }
 
+/* 播放器容器：不占位、不可见，但保持渲染中（display:none 在个别浏览器上会让自动播放更严） */
+.audio-dock {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---------- AI 内容标识（故事模式右上角，常驻） ---------- */
+.ai-badge { display: none; }
+body.broadcast-story .ai-badge {
+  position: absolute;
+  top: clamp(8px, 1vw, 20px);
+  right: var(--pad);
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px clamp(11px, 0.95vw, 18px);
+  border: 1px solid rgba(178, 214, 246, 0.34);
+  border-radius: 999px;
+  background: rgba(6, 18, 38, 0.62);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: #eaf6ff;
+  font-size: clamp(12px, 0.95vw, 19px);
+  letter-spacing: 0.06em;
+  line-height: 1;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+/* 前面那个小圆点：一眼能看出是「标识」而不是普通标题 */
+body.broadcast-story .ai-badge::before {
+  content: '';
+  width: 0.5em;
+  height: 0.5em;
+  border-radius: 50%;
+  background: #7ef0c0;
+  box-shadow: 0 0 8px rgba(126, 240, 192, 0.85);
+}
+
 /* ---------- 背景 ---------- */
 .bglayer {
   position: absolute;
   inset: 0;
-  opacity: var(--bg-alpha, 0.86);
+  opacity: var(--bg-alpha, 1);
   background:
-    radial-gradient(46vw 60vh at 16% 4%, #1c4376 0%, rgba(16, 42, 78, 0) 62%),
-    radial-gradient(40vw 55vh at 90% 12%, #24356b 0%, rgba(18, 34, 70, 0) 60%),
-    radial-gradient(48vw 50vh at 60% 106%, #0d2b52 0%, rgba(7, 21, 40, 0) 64%),
-    linear-gradient(158deg, var(--bg-1) 0%, var(--bg-2) 46%, var(--bg-3) 100%);
+    linear-gradient(rgba(12, 8, 5, 0.04), rgba(12, 8, 5, 0.12)),
+    url('./assets/backgrounds/nyc-retro-room-v1.png') center / cover no-repeat,
+    var(--bg-3);
+  pointer-events: none;
 }
 
 .orb {
@@ -139,6 +185,85 @@ body.bare {
 .pet-zone {
   grid-area: pet;
 }
+
+.game-stage {
+  grid-area: story;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-height: 0;
+  padding: clamp(10px, 1.45vw, 28px);
+  overflow: auto;
+}
+.game-head, .game-footer {
+  display: flex;
+  align-items: center;
+  gap: clamp(8px, 1vw, 18px);
+}
+.game-head h1 {
+  margin: 0;
+  font-size: clamp(26px, 3.4vw, 62px);
+  line-height: 1;
+  color: #f0faff;
+}
+.game-head > div:first-child, .game-footer > span { flex: 1; }
+.game-stat {
+  display: grid;
+  gap: 3px;
+  padding: 5px clamp(5px, 1vw, 16px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  text-align: center;
+  white-space: nowrap;
+}
+.game-stat span, .game-footer { color: var(--ink-soft); font-size: var(--fs-kicker); }
+.game-stat strong { color: #f0faff; font-size: clamp(16px, 1.65vw, 32px); font-variant-numeric: tabular-nums; }
+.game-board-wrap { flex: 1; min-height: 140px; container-type: size; display: grid; place-items: center; }
+.game-board {
+  display: grid;
+  grid-template: repeat(4, minmax(0, 1fr)) / repeat(4, minmax(0, 1fr));
+  width: min(100cqw, 100cqh, 590px);
+  aspect-ratio: 1;
+  gap: clamp(4px, 1.6cqw, 11px);
+  padding: clamp(4px, 1.6cqw, 11px);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(5, 16, 35, 0.76);
+}
+.game-tile {
+  display: grid;
+  place-items: center;
+  border-radius: clamp(4px, 1.7cqw, 13px);
+  background: #9272b9;
+  color: #fff;
+  font-size: clamp(11px, min(8cqw, 8cqh), 48px);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.game-tile[data-value="0"] { background: rgba(152, 200, 240, 0.14); }
+.game-tile[data-value="2"] { background: #e1f4ff; color: #193652; }
+.game-tile[data-value="4"] { background: #b3e1fa; color: #193652; }
+.game-tile[data-value="8"] { background: #78bfe9; color: #13324e; }
+.game-tile[data-value="16"] { background: #427fb4; }
+.game-tile[data-value="32"] { background: #5667b1; }
+.game-tile[data-value="64"] { background: #785bb2; }
+.game-tile[data-value="128"] { background: #a65f9c; }
+.game-tile[data-value="256"] { background: #a94e75; }
+.game-tile[data-value="512"] { background: #b95959; }
+.game-tile[data-value="1024"], .game-tile[data-value="2048"] { background: #ffe3a4; color: #54351a; }
+.game-footer { flex-wrap: wrap; }
+.game-footer button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 8px;
+  color: #e6f5ff;
+  background: rgba(67, 111, 165, 0.38);
+  font: inherit;
+  cursor: pointer;
+}
+body:not(.broadcast-story) .summary-card,
+body:not(.broadcast-story) .toc-wrap,
+body:not(.broadcast-story) #clock { display: none !important; }
 
 /* 时段调度提示；固定在画面上方，方便 OBS/直播伴侣采集整屏。 */
 .broadcast-mode {
@@ -979,6 +1104,14 @@ body.broadcast-fitness .bglayer {
   font-size: 1.25em;
 }
 
+/* 动态城市背景上的卡片加深底色，保证浅色文字清晰。 */
+body:not(.bare) .card,
+body:not(.bare) .danmaku-wrap,
+body:not(.bare) .paper,
+body:not(.bare) .summary-card {
+  background: linear-gradient(158deg, rgba(8, 24, 36, 0.72), rgba(8, 20, 32, 0.56));
+}
+
 /* 透明叠层模式：背景交给直播伴侣/OBS，卡片自己带一层深色底，保证字看得清 */
 body.bare .card,
 body.bare .danmaku-wrap,
@@ -1039,6 +1172,229 @@ body.bare .gift-foot {
   }
   .pet-zone {
     display: none;
+  }
+}
+
+/* 聊天场景：左边弹幕，中间主播，右边点歌和礼物。 */
+.room-intro,
+.ai-disclosure {
+  display: none;
+}
+
+.broadcast-chat .bglayer {
+  background-image:
+    linear-gradient(90deg, rgba(15, 9, 5, 0.20), transparent 35%, transparent 75%, rgba(15, 9, 5, 0.12)),
+    url('./assets/backgrounds/nyc-retro-room-v1.png');
+  background-position: center;
+  background-size: cover;
+}
+
+.broadcast-chat .stage {
+  --pad: clamp(10px, 2vw, 34px);
+  --gap: clamp(8px, 1.1vw, 20px);
+  --line: rgba(171, 230, 222, 0.36);
+  --accent: #a2eadb;
+  grid-template-columns: minmax(0, 24fr) minmax(0, 52fr) minmax(0, 24fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "room pet queue"
+    "dm pet gift"
+    "dm pet token";
+}
+
+.broadcast-chat .room-intro {
+  display: grid;
+  grid-area: room;
+  align-content: start;
+  gap: var(--gap);
+}
+
+.room-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.room-heading h1,
+.room-live,
+.ai-disclosure {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.room-heading h1 {
+  padding: 5px 12px;
+  color: #162f31;
+  background: linear-gradient(110deg, #a5e5d4, #f4b69e);
+  font-size: clamp(13px, 1.45vw, 26px);
+}
+
+.room-live,
+.ai-disclosure {
+  padding: 5px 9px;
+  background: rgba(6, 23, 29, 0.82);
+  font-size: var(--fs-kicker);
+}
+
+.room-live {
+  color: #ffd0db;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.room-live::before {
+  content: '●';
+  color: #ff7799;
+  margin-right: 4px;
+}
+
+.room-notice {
+  padding: clamp(8px, 1.1vw, 18px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(6, 23, 29, 0.8);
+}
+
+.room-notice p {
+  margin: 5px 0 0;
+  color: #d9fff4;
+  font-size: clamp(12px, 1.24vw, 22px);
+  line-height: 1.45;
+}
+
+.broadcast-chat .ai-disclosure {
+  display: block;
+  grid-area: pet;
+  justify-self: center;
+  align-self: start;
+  z-index: 1;
+  color: var(--ink-soft);
+}
+
+.broadcast-chat:not(.bare) .queue-card,
+.broadcast-chat:not(.bare) .giftbar {
+  border-color: rgba(246, 208, 145, 0.6);
+  background: linear-gradient(155deg, rgba(11, 74, 79, 0.94), rgba(7, 32, 43, 0.82));
+}
+
+.broadcast-chat .queue-card {
+  max-height: 23vh;
+}
+
+.broadcast-chat .queue {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.broadcast-chat .giftbar {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "head" "list" "thanks" "foot" "actions";
+}
+
+.broadcast-chat .gift-list {
+  justify-content: flex-start;
+}
+
+.gift-actions {
+  display: none;
+}
+
+.broadcast-chat .gift-actions {
+  display: block;
+  grid-area: actions;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.gift-actions h2 {
+  margin: 0 0 4px;
+  color: var(--accent);
+}
+
+.gift-action-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-body);
+}
+
+.gift-action-list li {
+  display: block;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(171, 230, 222, 0.13);
+}
+
+.gift-action-list li:last-child {
+  border-bottom: 0;
+}
+
+.gift-action-list strong {
+  flex-shrink: 0;
+  color: var(--gold);
+  font-weight: 600;
+}
+
+.broadcast-chat .danmaku-wrap {
+  backdrop-filter: blur(8px);
+}
+
+.broadcast-chat .pet-zone {
+  --pet-lift: 28%;
+  display: flex;
+  pointer-events: none;
+}
+
+.broadcast-chat .pet {
+  --pet-bottom: calc(var(--pet-lift) - 7%);
+  --pet-inset: auto auto var(--pet-bottom) 50%;
+  position: absolute;
+  inset: var(--pet-inset);
+  width: auto;
+  height: 112%;
+  transform: translateX(-50%) scale(0.54);
+}
+
+.broadcast-chat .pet-glow {
+  bottom: calc(var(--pet-lift) + 4%);
+}
+
+.broadcast-chat .nameplate {
+  bottom: calc(var(--pet-lift) - 6%);
+}
+
+.broadcast-chat .token-card {
+  z-index: 1;
+  width: clamp(155px, 15vw, 265px);
+  justify-self: end;
+  align-self: end;
+}
+
+@media (max-width: 760px) and (orientation: portrait) {
+  .broadcast-chat .stage {
+    grid-template-columns: minmax(0, 46fr) minmax(0, 54fr);
+    grid-template-rows: auto minmax(0, 1.2fr) minmax(0, 1fr) auto;
+    grid-template-areas:
+      "room queue"
+      "dm gift"
+      "pet pet"
+      ". token";
+  }
+  .broadcast-chat .ai-disclosure {
+    font-size: 9px;
+  }
+  .broadcast-chat .pet-zone {
+    --pet-lift: 20%;
+  }
+  .broadcast-chat .pet {
+    --pet-bottom: var(--pet-lift);
+    width: 100%;
+    height: 100%;
+  }
+  .broadcast-chat .token-card {
+    width: 100%;
   }
 }
 
@@ -1212,3 +1568,498 @@ body.bare .gift-foot {
 [hidden] {
   display: none !important;
 }
+
+/* 复古公寓：薄玻璃面板透出家具，暖光与窗外青绿保持一致。 */
+.broadcast-chat:not(.bare) .danmaku-wrap,
+.broadcast-chat:not(.bare) .token-card {
+  background: linear-gradient(155deg, rgba(18, 25, 25, 0.66), rgba(15, 21, 22, 0.48));
+  border-color: rgba(224, 186, 130, 0.30);
+}
+.broadcast-chat:not(.bare) .queue-card,
+.broadcast-chat:not(.bare) .giftbar {
+  background: linear-gradient(155deg, rgba(20, 43, 42, 0.72), rgba(18, 27, 27, 0.58));
+  border-color: rgba(224, 186, 130, 0.42);
+}
+.broadcast-chat:not(.bare) .room-notice {
+  background: rgba(18, 29, 29, 0.64);
+  border-color: rgba(224, 186, 130, 0.30);
+}
+@media (max-aspect-ratio: 4/3) {
+  .broadcast-chat .bglayer { background-position: 57% center; }
+}
+
+/* 房间布局：两侧透明窄栏，人物与说话 SVG 共用同一定位坐标。 */
+.broadcast-chat .stage {
+  --pad: clamp(6px, .65vw, 12px);
+  --gap: clamp(6px, .65vw, 12px);
+  --rail-width: clamp(150px, 12vw, 230px);
+  grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--rail-width);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "room pet queue" "dm pet gift" "dm pet token";
+}
+.broadcast-chat .pet-zone { --pet-lift: 8%; }
+.broadcast-chat .pet {
+  --pet-bottom: var(--pet-lift);
+  --pet-inset: auto auto var(--pet-bottom) 50%;
+  width: min(80vw, 1120px);
+  height: min(45vw, 630px);
+  object-fit: contain;
+  object-position: center;
+  transform: translateX(-50%);
+}
+.broadcast-chat .nameplate { bottom: 7%; }
+.broadcast-chat .pet-glow {
+  bottom: 10%;
+  width: min(26vw, 350px);
+  height: 4%;
+  background: radial-gradient(ellipse, rgba(10, 6, 3, .48), transparent 70%);
+  filter: blur(8px);
+}
+.broadcast-chat .voice-hint { bottom: 57%; }
+.broadcast-chat .token-card { width: 100%; }
+.broadcast-chat .room-heading h1 { font-size: clamp(12px, 1.05vw, 19px); padding: 4px 0; }
+.broadcast-chat .room-notice { padding: 7px 0; }
+.broadcast-chat .room-notice p { font-size: clamp(11px, .8vw, 15px); }
+.broadcast-chat .gift-head { flex-wrap: wrap; }
+
+.broadcast-chat .now { padding: 6px 0; gap: 6px; }
+.broadcast-chat .queue-card { max-height: 25vh; }
+.broadcast-chat .giftbar { align-self: start; max-height: 100%; }
+.broadcast-chat .ai-disclosure { font-size: 10px; }
+.broadcast-chat .card-kicker,
+.broadcast-chat .ink-dim,
+.broadcast-chat .queue-hint,
+.broadcast-chat .gift-foot { color: #d9e8e3; }
+.broadcast-chat .stage { text-shadow: 0 1px 3px #080b0c, 0 0 8px rgba(0, 0, 0, .75); }
+.broadcast-chat .danmaku-wrap,
+.broadcast-chat .card,
+.broadcast-chat .room-notice { padding: 8px; border-radius: 0; }
+/* 覆盖非 bare 场景的玻璃卡片样式，背景和模糊都完全移除。 */
+body.broadcast-chat .stage .card,
+body.broadcast-chat .stage .danmaku-wrap,
+body.broadcast-chat .stage .room-notice,
+body.broadcast-chat .stage .room-heading h1,
+body.broadcast-chat .stage .room-live,
+body.broadcast-chat .stage .now,
+body.broadcast-chat .stage .ai-disclosure {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.broadcast-chat .room-heading h1 { color: #e9f8f2; }
+@media (max-width: 760px) and (orientation: portrait) {
+  .broadcast-chat .stage { --rail-width: clamp(96px, 23vw, 150px); }
+  .broadcast-chat .room-heading { gap: 2px; }
+  .broadcast-chat .room-heading h1 { font-size: 12px; }
+  .broadcast-chat .room-notice p { font-size: 10px; }
+  .broadcast-chat .gift-action-list { font-size: 10px; }
+  .broadcast-chat .pet { width: 112vw; height: 63vw; }
+  .broadcast-chat .pet-zone { --pet-lift: 10%; }
+  .broadcast-chat .nameplate { bottom: 8%; font-size: 9px; }
+  .broadcast-chat .ai-disclosure { max-width: 100%; font-size: 8px; text-align: center; }
+}
+
+/* 送礼观众名单：独立浮层贴在舞台最右侧，不再压住中间的主播。
+   原来它是礼物横条里的一列，横条居中时正好盖在人物身上。 */
+.stage > .gift-donors {
+  position: absolute;
+  top: 50%;
+  right: var(--pad);
+  transform: translateY(-50%);
+  z-index: 5;
+  width: clamp(200px, 16vw, 320px);
+  max-height: 62vh;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(155deg, rgba(20, 43, 42, 0.72), rgba(18, 27, 27, 0.58));
+  overflow: hidden;
+  pointer-events: none;
+}
+.stage > .gift-donors h2 { margin: 0 0 4px; text-align: right; }
+.gift-donor-list { list-style: none; margin: 0; padding: 0; max-height: 19vh; overflow-y: auto; scrollbar-width: thin; }
+.stage > .gift-donors .gift-donor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: none;
+  overflow: visible;
+}
+.gift-donor-list li { display: flex; flex-direction: column; gap: 3px; padding: 5px 0; font-size: var(--fs-body); }
+.stage > .gift-donors .gift-donor-list li {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  padding: 0;
+  min-width: 0;
+}
+.donor-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff1d9; }
+.donor-detail { font-size: 11px; color: #d9e8e3; }
+.stage > .gift-donors .donor-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 栏内只有 200~340px，礼物名较长时折行显示，别用省略号把「最近送了什么」吃掉 */
+.stage > .gift-donors .donor-detail {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: right;
+  line-height: 1.35;
+}
+
+/* 待机视频和说话 SVG 共同缩放，以原画脚底为锚点，大小变化时脚不浮起。 */
+.broadcast-chat .pet {
+  transform: translateX(-50%) scale(var(--pet-user-scale, 1));
+  transform-origin: 50% 91.67%;
+}
+
+/* GIF 和室内原画共用一套 cover 裁切，窗口在不同屏幕下也不会错位。 */
+.room-panorama { position: absolute; inset: 0; display: block; width: 100%; height: 100%; pointer-events: none; }
+.bglayer::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(15,9,5,.12), transparent 35%, transparent 75%, rgba(15,9,5,.08)); pointer-events: none; }
+
+/* 随房间原画的 cover 裁切上移，覆盖窗顶；宽屏游戏输出铺满剩余空间。 */
+.luanti-stage { position: absolute; left: 14%; right: 13.5%; top: clamp(0px, calc(50vh - 21.85vw), 11vh); bottom: 35%; display: flex; flex-direction: column; align-items: stretch; z-index: 1; border: 1px solid rgba(180,220,215,.4); background: #050c0f; border-radius: 12px; overflow: hidden; }
+.luanti-stage header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; font-size: clamp(10px, .9vw, 14px); }
+.luanti-stage header b { flex-shrink: 0; }
+.luanti-stage header [data-status] { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: right; }
+.luanti-stage img { display: block; flex: 1 1 0; width: 100%; height: 0; min-height: 0; object-fit: cover; object-position: center; }
+/* 消息扩展到左侧可用宽度；不改变人物所在的网格列。 */
+.broadcast-chat.broadcast-luanti .danmaku-wrap { width: calc(15.6vw - var(--pad)); padding-inline: 4px; z-index: 3; }
+.broadcast-luanti .danmaku .msg { width: 100%; }
+.broadcast-luanti .pet-zone { --game-pet-lift: 14%; z-index: 2; }
+.broadcast-luanti .pet { --pet-inset: auto auto var(--game-pet-lift) 84%; width: min(38vw,540px); height: min(21.375vw,303.75px); transform: translateX(-50%) scale(calc(var(--pet-user-scale, 1) * 1.65)); }
+/* 游戏时人物抬到右下方地毯区域，名牌跟在脚下。 */
+.broadcast-chat.broadcast-luanti .nameplate { left: 84%; bottom: calc(var(--game-pet-lift) - 3%); }
+.broadcast-luanti .pet-glow { display: none; }
+
+/* 窄栏信息保持在游戏画面上方，避免游戏窗口盖住点歌和礼物名单。 */
+.broadcast-luanti .queue-card,
+.broadcast-luanti .giftbar,
+.broadcast-luanti .token-card { z-index: 3; }
+
+/* 直播画面不画鼠标指针：窗口采集 / 整屏采集会把系统光标一起拍进画面，
+   推流观众就能看到一支鼠标在屏幕上晃。这里让浏览器不画光标，采集端也就抓不到。
+   只作用于直播页（body.broadcast-chat），操作台 /admin 正常带光标。 */
+body.broadcast-chat,
+body.broadcast-chat *,
+body.broadcast-chat *::before,
+body.broadcast-chat *::after { cursor: none !important; }
+
+/* ---------- 礼物横条：中间偏下，固定两行 ---------- */
+/* 右侧窄栏只有 ~230px，装不下 11 条「礼物触发动作」，之前靠 overflow-y:auto 硬塞，
+   于是出现一条滚动条。现在把整块礼物面板从右栏摘出来，绝对定位到中间列底部。
+   布局用 grid 写死两行：第一行放金额/图鉴/观众，第二行整行留给触发动作，
+   动作列表再按 6 列铺 → 11 条正好 6+5 两排，不再是一条超长的横线。 */
+.broadcast-chat .giftbar {
+  position: absolute;
+  /* 关键：网格子项绝对定位时，包含块默认是它自己的网格区域（右侧窄栏）。
+     置为 auto 后包含块变成 .stage 的内边距盒，left/right 才能按整页来算。 */
+  grid-area: auto;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  bottom: var(--pad);
+  z-index: 4;
+  width: max-content;
+  max-width: calc(100% - 2 * (var(--pad) + var(--rail-width) + var(--gap)));
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  grid-template-areas:
+    "head foot list thanks"
+    "actions actions actions actions";
+  align-items: center;
+  justify-content: center;
+  gap: 3px 14px;
+  max-height: none;
+  overflow: visible;
+  padding: 5px 12px;
+  border-color: transparent;
+  background: transparent;
+}
+/* 里层各块不再独占一行，按下面的网格位置压平成标签。 */
+.broadcast-chat .giftbar > * {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.broadcast-chat .gift-head { grid-area: head; gap: 7px; }
+.broadcast-chat .gift-foot { grid-area: foot; text-align: left; }
+.broadcast-chat .gift-list { grid-area: list; flex-wrap: wrap; justify-content: flex-start; }
+.broadcast-chat .gift-thanks { grid-area: thanks; }
+.broadcast-chat .gift-actions { grid-area: actions; }
+
+/* 触发动作原地铺开换行，不再有 max-height + 滚动 */
+.broadcast-chat .gift-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 3px 10px;
+  border-top: 0;
+}
+.broadcast-chat .gift-actions h2 {
+  margin: 0;
+  white-space: nowrap;
+}
+/* 3 列定宽 → 当前 6 条动作排成 3 + 3 两排（读序保持从左到右） */
+.broadcast-chat .gift-action-list {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  justify-content: center;
+  gap: 3px 14px;
+}
+.broadcast-chat .gift-action-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border-bottom: 0;
+  white-space: nowrap;
+}
+/* 底部横带压得很低，人物名牌抬高一点，避免被盖住 */
+.broadcast-chat .nameplate { bottom: 13%; }
+
+/* 隐藏消息面板，保留 DOM 中的消息接收和语音播放逻辑。 */
+.broadcast-chat .danmaku-wrap { display: none !important; }
+.broadcast-chat .giftbar {
+  bottom: calc(var(--pad) + clamp(24px, 3.5vh, 42px));
+  --gift-text-size: clamp(14px, 1.05vw, 20px);
+  gap: 7px 16px;
+}
+.broadcast-chat .giftbar .card-kicker,
+.broadcast-chat .giftbar .gift-count,
+.broadcast-chat .giftbar .gift-foot,
+.broadcast-chat .giftbar .gift-list,
+.broadcast-chat .giftbar .gift-thanks,
+.broadcast-chat .giftbar .gift-donor-list li,
+.broadcast-chat .giftbar .donor-detail,
+.broadcast-chat .giftbar .gift-action-list,
+.broadcast-chat .giftbar .gift-action-list li {
+  font-size: var(--gift-text-size);
+  line-height: 1.5;
+}
+
+/* 直播态：送礼观众浮层透明化，只留文字，贴在最右侧的空白栏里。
+   字号不再沿用 giftbar 的变量（已不在横条内），单独给一套。 */
+.broadcast-chat .stage > .gift-donors {
+  --gift-text-size: clamp(13px, 0.95vw, 18px);
+  top: 50%;
+  right: var(--pad);
+  width: clamp(220px, 17vw, 340px);
+  padding: 4px 0;
+  border-color: transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.broadcast-chat .stage > .gift-donors h2,
+.broadcast-chat .stage > .gift-donors .gift-donor-list li,
+.broadcast-chat .stage > .gift-donors .donor-detail {
+  font-size: var(--gift-text-size);
+  line-height: 1.5;
+}
+.broadcast-chat .stage > .gift-donors .donor-detail {
+  font-size: calc(var(--gift-text-size) * 0.74);
+  line-height: 1.25;
+  color: #c8d8d4;
+}
+.broadcast-chat .stage > .gift-donors h2 {
+  font-size: calc(var(--gift-text-size) * 0.82);
+  color: #d9e8e3;
+}
+.broadcast-chat .stage > .gift-donors .donor-name { color: #fff1d9; }
+
+/* ---------- 故事模式：小说框盖住背景落地窗 ----------
+   落地窗玻璃在 1672×941 的 room-panorama 里是 x 275–1415 / y 111–584，
+   换算成 16:9 画面的百分比就是下面这套定位（实测 315.8→1624.9 / 127.2→670.6）。
+   动之前先用 node tools/probe.mjs 量一遍，别凭感觉调。 */
+body.broadcast-story .story {
+  position: absolute;
+  z-index: 1;
+  /* 绝对定位的栅格子元素默认以自己的栅格区为基准，百分比会算错；
+     置成 auto 才会按 .stage 的 padding box（整块画面）算。 */
+  grid-area: auto;
+  left: 16.45%;
+  top: 11.78%;
+  width: 68.18%;
+  height: 50.31%;
+  gap: 0;
+  padding: clamp(10px, 1.3vw, 24px) clamp(14px, 1.7vw, 32px) clamp(8px, 1vw, 18px);
+  border-radius: var(--radius);
+  border: 1px solid rgba(160, 210, 255, 0.22);
+  /* 底色压得比原来的玻璃纸更实，不然窗外的城市还会透出来 */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03)),
+    radial-gradient(70% 60% at 50% 0%, rgba(143, 216, 255, 0.1), transparent 70%),
+    rgba(6, 18, 38, 0.94);
+  box-shadow: 0 20px 50px rgba(3, 12, 28, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(16px);
+  overflow: hidden;
+}
+
+/* 正文铺满面板：原文的硬换行和全角缩进已在 app.js 的 flowText() 抹掉，
+   这里再两端对齐，行尾就齐平，不会一行短一截、右边空一大片。
+   81% 是「刚好停在大肥鱼身侧」的宽度——再往右，字就会被角色挡住。 */
+body.broadcast-story .bubble {
+  max-width: 85%;
+  text-align: justify;
+  line-height: 1.78;
+  /* 单行硬换行已经被 flowText() 合掉，这里保留的只有段落之间的空行 */
+  white-space: pre-wrap;
+}
+
+/* 玻璃纸的效果交给外层面板，.paper 只负责排版文字 */
+body.broadcast-story .paper {
+  align-items: stretch;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+/* 角色站在小说框前面，别被面板压住 */
+body.broadcast-story .pet-zone {
+  z-index: 2;
+}
+
+/* token 卡的底边和落地窗顶边差 7px，让卡片压在面板上，避免圆角被切 */
+body.broadcast-story .token-card {
+  position: relative;
+  z-index: 3;
+}
+
+/* 弹幕列表收起来，弹幕卡缩成左下角的「阶段 + 倒计时 + 目录」 */
+body.broadcast-story .danmaku-wrap {
+  position: absolute;
+  z-index: 2;
+  grid-area: auto;
+  left: var(--pad);
+  bottom: var(--pad);
+  width: min(31%, 520px);
+  height: auto;
+  max-height: 46vh;
+}
+body.broadcast-story .danmaku { display: none; }
+body.broadcast-story .danmaku-head .card-kicker,
+body.broadcast-story .danmaku-n { display: none; }
+body.broadcast-story .danmaku-head {
+  justify-content: flex-end;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+/* 故事模式下把几块「列表」的玻璃底全撤掉：目录/弹幕浮层、礼物条、点歌队列、线索卡、
+   今日 token 消耗卡。 */
+body.broadcast-story .danmaku-wrap,
+body.broadcast-story .giftbar,
+body.broadcast-story .queue-card,
+body.broadcast-story .summary-card,
+body.broadcast-story .token-card {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  /* 没了底色，给字加一点暗描边，压在城市/地毯上也读得清 */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.72), 0 0 14px rgba(0, 0, 0, 0.5);
+}
+/* 目录压在浅色地毯上，原来的淡灰字读不动，单独提亮 */
+body.broadcast-story .danmaku-wrap .toc li { color: rgba(228, 242, 255, 0.82); }
+body.broadcast-story .danmaku-wrap .toc li.done { color: rgba(228, 242, 255, 0.44); }
+body.broadcast-story .danmaku-wrap .toc li.current { color: #ffffff; }
+body.broadcast-story .danmaku-wrap .card-kicker,
+body.broadcast-story .danmaku-wrap .toc-n { color: rgba(228, 242, 255, 0.72); }
+body.broadcast-story .queue-card .now,
+body.broadcast-story .giftbar .gift-thanks {
+  background: none;
+  border-color: transparent;
+}
+/* 目录和列表之间那条分隔线在透明底上会显得突兀，留着反而分不清层级 */
+body.broadcast-story .toc-wrap {
+  border-top-color: rgba(255, 255, 255, 0.1);
+}
+/* 阶段芯片和时钟也跟列表保持一致：只留字，不留底色和描边 */
+body.broadcast-story .danmaku-wrap .phase-chip {
+  background: none;
+  border-color: transparent;
+  padding: 0;
+}
+body.broadcast-story .danmaku-wrap .clock { color: rgba(228, 242, 255, 0.8); }
+/* 线索卡压在浅色地毯上，同样提亮一档 */
+body.broadcast-story .summary-card .summary-chapter,
+body.broadcast-story .summary-card .card-kicker { color: rgba(228, 242, 255, 0.72); }
+body.broadcast-story .summary-card .summary-text { color: rgba(240, 249, 255, 0.92); }
+body.broadcast-story .summary-card .clue-col span { color: rgba(238, 248, 255, 0.84); }
+
+
+
+/* 故事间：正文保持覆盖落地窗，互动放在下方，人物独立缩放。 */
+/* 站位：往左挪一档、缩到 60% 高，让角色整个人落在底栏右前方那块空地上
+   （right 12% / height 60% 是从画面实测反推的：脚落在底栏上沿下方、个头不进小说框）。 */
+body.broadcast-story .pet-zone {
+  position: absolute; grid-area: auto; right: 12%; bottom: 7%; width: 26%; height: 60%;
+}
+body.broadcast-story .pet {
+  object-fit: contain; transform: scale(var(--story-pet-scale, 1)); transform-origin: 50% 91.67%;
+}
+body.broadcast-story .story-head { padding-bottom: 10px; border-bottom: 1px solid rgba(180,210,240,.15); margin-bottom: 12px; }
+body.broadcast-story .bubble { max-width: 86%; font-size: clamp(16px,1.3vw,27px); line-height: 1.85; }
+body.broadcast-story .danmaku-wrap {
+  left: 16.45%; bottom: 7%; width: 55%; height: 26%; max-height: none;
+  display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.25fr); grid-template-rows: auto minmax(0,1fr);
+  gap: 10px 20px; padding: 14px 20px; border: 1px solid rgba(180,210,240,.16);
+  border-radius: var(--radius); background: rgba(6,18,38,.72);
+}
+body.broadcast-story .danmaku-head { grid-column: 1 / -1; justify-content: flex-end; }
+/* 故事间不再显示消息列表（弹幕）：这块位置整块让给网易云音乐列表 */
+body.broadcast-story .danmaku { display: none; }
+body.broadcast-story .danmaku-head .card-kicker,
+body.broadcast-story .danmaku-n { display: none; }
+body.broadcast-story .toc-wrap { grid-column: 1; grid-row: 2; min-height: 0; margin: 0; padding: 0 16px 0 0; border-top: 0; border-right: 1px solid rgba(180,210,240,.16); overflow-y: auto; }
+/* 底栏右栏：点歌队列卡（app.js 在故事模式下把它整块挪进这个槽位） */
+body.broadcast-story .story-music-slot { grid-column: 2; grid-row: 2; display: block; min-width: 0; min-height: 0; }
+/* 还没排章节、没有目录时，音乐列表独占整条底栏 */
+body.broadcast-story .danmaku-wrap:has(.toc-wrap[hidden]) .story-music-slot { grid-column: 1 / -1; }
+/* 底栏只有 18%~26% 高，竖着排「标题 + 正在播 + 进度 + 列表」列表就只剩一行，
+   所以这里改成左右两栏：左栏放正在播和进度，右栏整列给歌单。 */
+body.broadcast-story .story-music-slot .queue-card {
+  grid-area: auto; align-self: stretch; width: 100%; height: 100%;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-items: start; row-gap: 7px; column-gap: 20px;
+  max-height: none; padding: 0; overflow: hidden;
+}
+body.broadcast-story .story-music-slot .queue-card > .card-kicker { grid-column: 1; grid-row: 1; }
+body.broadcast-story .story-music-slot .queue-card > .now { grid-column: 1; grid-row: 2; width: 100%; min-width: 0; }
+body.broadcast-story .story-music-slot .queue-card > .progress-line { grid-column: 1; grid-row: 3; width: 100%; align-self: start; }
+body.broadcast-story .story-music-slot .queue {
+  grid-column: 2; grid-row: 1 / -1; align-self: stretch;
+  display: grid; grid-auto-rows: minmax(0, auto); align-content: start;
+  gap: 3px; min-height: 0; overflow: hidden;
+}
+body.broadcast-story .story-music-slot .queue li { padding: 2px 0; }
+/* 底栏里那句「弹幕里发点歌」的提示没意义了，去掉，把高度留给歌名 */
+body.broadcast-story .story-music-slot .queue-hint { display: none; }
+/* 这块面板里不要滚动条：直播画面上一条灰杠比截断难受，滚动条一律藏掉 */
+body.broadcast-story .danmaku-wrap,
+body.broadcast-story .danmaku-wrap *,
+body.broadcast-story .summary-card { scrollbar-width: none; -ms-overflow-style: none; }
+body.broadcast-story .danmaku-wrap::-webkit-scrollbar,
+body.broadcast-story .danmaku-wrap *::-webkit-scrollbar,
+body.broadcast-story .summary-card::-webkit-scrollbar { width: 0; height: 0; display: none; }
+body.broadcast-story .summary-card { position: absolute; grid-area: auto; left: 16.45%; top: 63%; width: 55%; max-height: 5%; overflow-y: auto; padding: 4px 12px; }
+body.broadcast-story .pet { object-fit: cover; }
+body.broadcast-story .stage:has(.summary-card:not([hidden])) .danmaku-wrap { height: 18%; }
+body.broadcast-story .summary-card { max-height: 10%; background: rgba(6,18,38,.72); border-radius: 12px; }

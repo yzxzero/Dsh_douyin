@@ -20,7 +20,7 @@
 <div class="layout">
 <nav class="tabs" id="tabs">
   <button class="tab active" data-pane="basic">① 基础设置</button>
-  <button class="tab" data-pane="story">② 故事直播间</button>
+  <button class="tab" id="storyTab" data-pane="story" hidden>② 故事直播间</button>
   <button class="tab" data-pane="fitness">③ 健身房直播间</button>
   <button class="tab" data-pane="board">④ 数据看板</button>
 </nav>
@@ -28,6 +28,46 @@
 <main>
   <!-- ================= ① 基础设置 ================= -->
   <div class="pane active" id="pane-basic">
+
+    <section class="panel">
+      <h2>Minetest / Luanti · 亚特兰蒂斯从零建城</h2>
+      <div class="row">
+        <label class="inline"><input id="mdEnabled" type="checkbox" /> 允许主播玩游戏</label>
+        <span class="hint">立即保存；关闭会退出当前对局，恢复聊天背景，禁止自动和手动开局。</span>
+      </div>
+      <div class="row">
+        <button id="mdStart" class="primary">启动游戏，让大肥鱼玩</button>
+        <button id="mdPause">暂停游戏</button><button id="mdResume">继续游戏</button>
+        <button id="mdAutoOff">停止自动操作</button><button id="mdChat">结束本局，总结后回聊天</button>
+      </div>
+      <div class="row">
+        <label class="inline"><input id="mdAutoStart" type="checkbox" /> 空闲时自动开一局</label>
+        <label>空闲</label><input id="mdIdleStart" type="number" min="1" max="120" value="5" style="width:75px" /> 分钟
+        <label>聊天最长</label><input id="mdMaxWait" type="number" min="1" max="240" value="10" style="width:75px" /> 分钟
+        <label>两局间隔</label><input id="mdRoundGap" type="number" min="1" max="1440" value="10" style="width:75px" /> 分钟
+      </div>
+      <div class="row">
+        <label>游戏中无互动</label><input id="mdIdleTalk" type="number" min="30" max="600" value="60" style="width:75px" /> 秒后说一句进展
+        <label class="inline"><input id="mdAudience" type="checkbox" /> 采纳观众操作建议</label>
+        <button id="mdSettingsSave" type="button">保存游戏流程设置</button>
+      </div>
+      <p class="hint">只在聊天场景且直播页打开时自动开局。可发“投票 高楼 / 投票 尖塔 / 投票 街区 / 加速搭 / 暂停建造 / 继续建造”。每栋建筑前投票 30 秒，同一显示名一票可修改，最高票选择下一张尚未完成的蓝图；无票按规划顺序。进度自动保存，下次接着搭。</p>
+      <p class="hint">参考海底都市图片的方块风格城市：从空白海床开始，共 16 个工段，先广场和道路，再 11 栋楼房及尖塔，楼群完成后铺全城道路地砖、入户步道，再安装主路及横街路灯。默认原速的四分之一，约每 3.2 秒真实放置一块；观众每说一次“加速搭”，当前速度增加 5%，自动保存，不自行提速。每分钟只播报在搭哪部分。黄色框提示位置。全程固定同一个镜头。运行官方 Luanti 和 Minetest Game，创造模式按预设蓝图施工；全部完成后进入展示。直播间背景、人物大小和位置保留原样，聊天和点歌照常。</p>
+      <p class="hint" id="mdAutoState" role="status">正在读取自动开局状态…</p>
+      <div id="mdResult" class="result" role="status"></div>
+    </section>
+
+    <section class="panel">
+      <h2>人物大小</h2>
+      <div class="row">
+        <label for="petScale">缩放</label>
+        <input id="petScale" type="range" min="50" max="150" step="1" value="100" style="width:min(55vw,360px)" />
+        <output id="petScaleValue" for="petScale">100%</output>
+        <button id="petScaleReset" type="button">恢复默认</button>
+      </div>
+      <p class="hint">拖动即可调整直播人物和嘴型的大小，脚下位置保持在地毯上；设置自动保存。</p>
+      <div class="result" id="petScaleResult" role="status"></div>
+    </section>
 
     <section class="panel">
       <h2>接入 DeepSeek</h2>
@@ -45,6 +85,11 @@
         </select>
         <label class="inline"><input id="autoReply" type="checkbox" /> 弹幕来了自动回</label>
         <button id="testAi">测一句话</button>
+      </div>
+      <div class="row">
+        <label>点赞答谢</label>
+        <label class="inline"><input id="likeVoice" type="checkbox" /> 出声</label>
+        <label class="inline"><input id="likeInReading" type="checkbox" /> 念正文时也谢（插播一句再接着念）</label>
       </div>
       <div class="row">
         <label>备用模型</label>
@@ -178,6 +223,11 @@
             <option value="edge:leng">御姐 · 冷</option>
             <option value="edge:diyin">御姐 · 低</option>
             <option value="edge:xiaoxiao">原味 · 晓晓</option>
+            <option value="edge:xiaoyi">原声 · 晓伊</option>
+            <option value="edge:yunjian">云健 · 男声</option>
+            <option value="edge:yunxi">云希 · 男声</option>
+            <option value="edge:yunxia">云夏 · 男声</option>
+            <option value="edge:yunyang">云扬 · 男声</option>
           </optgroup>
           <optgroup label="本地音色（不联网，合成慢一点）">
             <option value="kokoro:xiaobei">本地 · 小北</option>
@@ -197,6 +247,17 @@
           <option value="1.3">很快</option>
         </select>
       </div>
+      <div class="row">
+        <label for="voEffect">Edge 音效</label>
+        <select id="voEffect"><option value="normal">原声</option><option value="sweet">轻甜高音</option><option value="electro">轻电音</option><option value="electro_strong">明显电音</option></select>
+        <span class="hint">选择后自动保存，只对 Edge 生效；弹幕、欢迎语和讲解共用。</span>
+      </div>
+      <div class="row">
+        <label for="voEdgeVoice">Edge 指定音色</label>
+        <select id="voEdgeVoice" style="width:360px"><option value="">跟随上方音色预设</option></select>
+        <button id="voEdgeRefresh">查询在线音色</button>
+      </div>
+      <p class="hint">不指定时跟随预设；可查询微软服务当前的完整列表。查询、合成需要联网，电音在本机处理。</p>
       <div class="row">
         <label>念正文用</label>
         <select id="voChapterEngine" style="width:230px">
@@ -278,6 +339,13 @@
         <label class="inline"><input id="gdIdleOn" type="checkbox" /> 每隔</label>
         <input id="gdIdleEvery" type="number" min="15" max="600" step="5" style="width:90px" /> 秒没人说话就主动说一句
       </div>
+      <div class="row">
+        <label class="inline"><input id="gdIdleMusic" type="checkbox" /> 暖场时搜索相关网易云歌曲</label>
+        <label>最少间隔</label><input id="gdIdleMusicEvery" type="number" min="60" max="7200" step="60" style="width:90px" /> 秒
+      </div>
+      <label for="gdTopicNotes">近期话题素材（可填动漫、游戏、电影、剧集、小说、歌曲的作品名、事实和来源）</label>
+      <textarea id="gdTopicNotes" rows="3" maxlength="4000" placeholder="例如：作品名；想聊的亮点；信息日期；来源链接。修改保存后七天内有效。"></textarea>
+      <p class="hint">六类话题轮换，按北京时间区分白天和夜间。搜歌默认间隔十分钟，找到可播放版本才排队，观众点歌优先，当前歌曲播完再播。近期素材需手动更新；未填写或过期时不声称实时热度。</p>
       <span class="hint">
         提示内容轮流来，不重复；填 0 或关掉「每隔」就不发。人多时欢迎会合并成一句。
         暖场那句会让模型按当前情境现编（没 Key 或超时就用固定词），**会出声**；念正文期间不算冷场，不插嘴。
@@ -300,6 +368,17 @@
 
   <!-- ================= ② 小说朗读 ================= -->
   <div class="pane" id="pane-story">
+    <section class="panel">
+      <h2>故事间人物大小</h2>
+      <div class="row">
+        <label for="storyPetScale">缩放</label>
+        <input id="storyPetScale" type="range" min="50" max="150" step="1" value="100" style="width:min(55vw,360px)" />
+        <output id="storyPetScaleValue" for="storyPetScale">100%</output>
+        <button id="storyPetScaleReset" type="button">恢复默认</button>
+      </div>
+      <p class="hint">仅调整故事间人物，人物和嘴型同步缩放，脚下位置固定；拖动后自动保存。</p>
+      <div class="result" id="storyPetScaleResult" role="status"></div>
+    </section>
     <section class="panel">
       <h2>小说朗读 · 今天这一本</h2>
       <p class="hint">
@@ -370,7 +449,7 @@
       <h2>健身房 · 现在怎么样</h2>
       <p class="hint">
         健身房有自己的画面 <a href="/fitness" target="_blank">/fitness ↗</a>（OBS 可以直接抓这个窗口）。它开着的时候，弹幕、点歌、聊天都归这间；
-        故事间会自动让位，两边不会抢话。
+        主直播间会自动让位，两边不会抢话。
       </p>
       <div class="row">
         <span class="pill" id="fitLive">未打开</span>
@@ -378,7 +457,9 @@
       </div>
       <div class="row">
         <button id="fitOpen" class="primary">打开健身房画面 ↗</button>
-        <button id="fitShowStory">故事间上台</button>
+        <button id="fitShowChat">聊天间上台</button>
+        <button id="fitShowGame">游戏间上台</button>
+        <button id="fitShowStory" hidden>故事间上台</button>
         <button id="fitShowFitness">健身房上台</button>
         <button id="fitAuto">按时段自动</button>
       </div>
@@ -498,6 +579,6 @@
 </main>
 </div>
 
-<script src="/admin.js?v=20261106-side"></script>
+<script src="/admin.js?v=like-reply-1"></script>
 </body>
 </html>

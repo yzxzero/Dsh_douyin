@@ -10,6 +10,7 @@
   input[type="text"] { width: 100%; box-sizing: border-box; height: 30px; border-radius: 8px; border: 1px solid #ffcfe1; padding: 0 8px; font-size: 12px; }
   button { width: 100%; height: 32px; margin-top: 10px; border-radius: 8px; border: 0; background: linear-gradient(135deg, #ff8ab8, #ff5f9e); color: #fff; font-weight: 700; font-size: 12px; cursor: pointer; }
   .stat { margin-top: 12px; font-size: 11px; color: #6d4a5b; background: #fff; border: 1px solid #ffe0ec; border-radius: 10px; padding: 8px 10px; line-height: 1.8; }
+  .stat { white-space: pre-line; }
   .stat b { color: #c2436f; }
   .warn { color: #b45309; }
 </style>
@@ -21,6 +22,7 @@
   <input id="server" type="text" placeholder="http://127.0.0.1:8787" />
   <label class="row"><input id="enabled" type="checkbox" style="width:auto;height:auto" /> 启用（抓弹幕 + 回写回复）</label>
   <button id="save">保存设置</button>
+  <button id="check">检查连接</button>
   <div class="stat" id="stat">读取中…</div>
   <script src="popup.js"></script>
 </body>

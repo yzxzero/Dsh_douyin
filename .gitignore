@@ -35,3 +35,17 @@ DaisyWriter/
 
 # 截图 / 调试脚本产物
 data/shot-*.png
+
+# 本机游戏模组编译产物与验证画面
+integrations/mindustry/build/
+output/mindustry/
+
+# 本机助手状态、测试临时实例和调试画面
+.workbuddy/
+output/
+**/__pycache__/
+*.py[cod]
+tests/control-server-*/
+tests/edge-integration-*/
+public/__mock__/
+_t_ascii.cmd

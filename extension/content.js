@@ -3,6 +3,8 @@
  * 2) 轮询服务的发送箱，把大肥鱼的回复打进直播间输入框
  */
 (() => {
+  // Personal profiles and creator dashboards have no live chat to send into.
+  if (location.hostname !== 'live.douyin.com' || !/^\/\d+\/?$/.test(location.pathname)) return;
   const DEFAULTS = { server: 'http://127.0.0.1:8787', enabled: true };
   const POLL_MS = 2500;
   const BATCH_MS = 350;
@@ -15,6 +17,18 @@
   const sentTexts = new Map();
   const queue = [];
   const stats = { caught: 0, sent: 0, failed: 0, lastError: '', lastAt: 0 };
+
+  async function request(action, body) {
+    const result = await chrome.runtime.sendMessage({ type: 'dafeiyu-request', action, body });
+    if (!result?.ok) throw new Error(result?.error || '扩展后台未响应，请重新加载扩展并刷新直播间');
+    return result.data;
+  }
+
+  chrome.runtime.onMessage.addListener((message, sender, respond) => {
+    if (message?.type === 'dafeiyu-page-status') {
+      respond({ ready, enabled: conf.enabled, ...stats, url: location.href });
+    }
+  });
 
   // ---------- 存储 ----------
   function loadConf() {
@@ -43,7 +57,9 @@
   const GIFT_RE = /^(.{1,24}?)\s*(?:送给主播|送出|赠送|投喂)\s*(.{1,16}?)(?:\s*[×xX*]\s*(\d+))?\s*$/;
   const ENTER_RE = /^(.{1,24}?)\s*(?:来了|进入了直播间|来啦)$/;
   const FOLLOW_RE = /^(.{1,24}?)\s*关注了主播/;
-  const LIKE_RE = /^(.{1,24}?)\s*(?:为主播)?(?:点赞了?|点了赞)/;
+  // 必须整行匹配：否则「收到 xx 的点赞，我记住这份心意啦」会被当成新点赞，
+  // 再把「收到 xx 的」当昵称，形成无限自我答谢。
+  const LIKE_RE = /^(.{1,24}?)\s*(?:为主播)?(?:点赞了?|点了赞)$/;
 
   function cleanName(s) {
     return String(s)
@@ -110,13 +126,9 @@
       while (queue.length) {
         const item = queue.shift();
         try {
-          const res = await fetch(`${conf.server}/api/event`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ ...item, source: 'extension', ts: Date.now(), url: location.href }),
-          });
-          if (!res.ok) throw new Error('HTTP ' + res.status);
+          await request('event', { ...item, source: 'extension', ts: Date.now(), url: location.href });
           stats.caught += 1;
+          stats.lastError = '';
           stats.lastAt = Date.now();
           saveStats();
         } catch (err) {
@@ -290,24 +302,24 @@
     }
   }
 
+  let polling = false;
   async function pollOutbox() {
-    if (!ready || !conf.enabled) return;
+    if (!ready || !conf.enabled || polling) return;
+    polling = true;
     try {
-      const res = await fetch(`${conf.server}/api/outbox`);
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await request('outbox');
+      stats.lastError = '';
+      saveStats();
       for (const it of data.items || []) {
         const ok = await sendComment(it.text);
-        await fetch(`${conf.server}/api/outbox/ack`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ ids: [it.id], ok, error: ok ? null : stats.lastError }),
-        }).catch(() => {});
+        await request('ack', { ids: [it.id], ok, error: ok ? null : stats.lastError });
         await new Promise((r) => setTimeout(r, 900));
       }
     } catch (err) {
       stats.lastError = err.message;
       saveStats();
+    } finally {
+      polling = false;
     }
   }
 

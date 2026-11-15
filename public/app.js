@@ -1,5 +1,7 @@
+import { mountLuanti } from './luanti-view.js?v=atlantis-1';
 /* 大肥鱼 · 写故事直播间 前端 */
-import { createPetLipSync } from './pet-lip-sync.js';
+import { createPetLipSync } from './pet-lip-sync.js?v=keyboard-reading-2';
+import { mount2048 } from './game-2048.js';
 
 const SERVER = location.origin;
 const bubble = document.getElementById('bubble');
@@ -63,6 +65,7 @@ const el = {
 };
 
 const state = {
+  closed: false,
   story: null,
   stats: null,
   song: null,
@@ -82,9 +85,12 @@ const state = {
   broadcast: null,
 };
 
-const watchVoice = createPetLipSync(pet, { cover: true });
+const watchVoice = createPetLipSync(pet, { cover: true, keyboard: true });
 watchVoice(el.voicePlayer);
 watchVoice(el.storyAudio);
+const showLuanti = mountLuanti(document.getElementById('luantiStage'));
+const showGame = mount2048(document.getElementById('gameStage'));
+const storyStage = document.getElementById('storyStage');
 
 /* ---------- 画面自适应：铺满浏览器，不做等比缩放 ---------- */
 function fit() {
@@ -107,6 +113,7 @@ const num = (n) => Number(n || 0).toLocaleString('zh-CN');
 const MOODS = {
   idle: 'assets/pet/idle.webm',
   talk: 'assets/pet/type.webm',
+  keyboard: 'assets/pet/keyboard.webm',
   greet: 'assets/pet/wave.webm',
   rice: 'assets/pet/rice.webm',
   fun: 'assets/pet/bubble.webm',
@@ -136,37 +143,83 @@ const MOODS = {
 const PHASE_MOOD = {
   idle: 'idle',
   preparing: 'busy',
-  reading: 'talk',
+  reading: 'keyboard',
   break: 'sing',
   afterword: 'think',
   done: 'idle',
 };
 
-/* 闲着的时候随机轮播的小动作（大肥鱼自己找事做） */
 const IDLE_POOL = ['sing', 'stretch', 'cat', 'tea', 'spin', 'tail', 'pace', 'laugh', 'dance', 'shy', 'doze', 'surprise'];
 const GIFT_POOL = ['happy', 'cheer', 'unwrap', 'dance', 'spin'];
+const GIFT_ACTIONS = [
+  { gifts: ['小心心', '棒棒糖'], mood: 'happy', label: '开心跳' },
+  { gifts: ['玫瑰', '鲜花'], mood: 'shy', label: '害羞' },
+  { gifts: ['大啤酒', '独角兽'], mood: 'dance', label: '跳舞' },
+  { gifts: ['比心'], mood: 'cheer', label: '雀跃' },
+  { gifts: ['跑车', '火箭'], mood: 'spin', label: '转圈' },
+  { gifts: ['嘉年华', '抖音1号'], mood: 'unwrap', label: '拆礼物' },
+];
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+const giftActions = document.getElementById('giftActions');
+
+function renderGiftActions(catalog = []) {
+  const icons = new Map(catalog.map(({ name, emoji }) => [name, emoji]));
+  const rows = GIFT_ACTIONS.map(({ gifts, label }) => {
+    const row = document.createElement('li');
+    const names = document.createElement('span');
+    for (const [index, name] of gifts.entries()) {
+      if (index) names.append(' / ');
+      const emoji = icons.get(name);
+      if (emoji) {
+        const icon = document.createElement('span');
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = emoji;
+        names.append(icon, '\u00a0');
+      }
+      names.append(name);
+    }
+    const action = document.createElement('strong');
+    action.textContent = label;
+    row.append(names, ' ', action);
+    return row;
+  });
+  giftActions.replaceChildren(...rows);
+}
+
+renderGiftActions();
 
 let moodTimer = null;
 let currentMood = 'idle';
+let giftMoodUntil = 0;
 
 function phaseMood(phase) {
   return PHASE_MOOD[phase] || 'idle';
 }
 
-function setMood(name, holdMs = 0) {
+function setMood(name, holdMs = 0, { gift = false } = {}) {
+  // 朗读期间只有礼物动作可以临时打断敲键盘，弹幕/文本打字结束不改变它。
+  if (!gift && state.story?.phase === 'reading') name = 'keyboard';
   const src = MOODS[name];
-  if (!src) return;
+  if (!src || (!gift && Date.now() < giftMoodUntil)) return;
   clearTimeout(moodTimer);
+  giftMoodUntil = gift ? Date.now() + holdMs : 0;
+  pet.dataset.giftAction = gift ? '1' : '0';
   if (name !== currentMood) {
     currentMood = name;
-    pet.src = src;
-    const p = pet.play();
-    if (p && p.catch) p.catch(() => {});
+    // 同一动作不重置视频进度，朗读可以连续敲键盘。
+    if (pet.getAttribute('src') !== src) {
+      pet.src = src;
+      const p = pet.play();
+      if (p && p.catch) p.catch(() => {});
+    }
   }
   if (holdMs) {
     /* 小动作演完，回到当前阶段的常态动作（不是一律回 idle） */
-    moodTimer = setTimeout(() => setMood(phaseMood(state.story?.phase || 'idle')), holdMs);
+    moodTimer = setTimeout(() => {
+      giftMoodUntil = 0;
+      setMood(phaseMood(state.story?.phase || 'idle'));
+    }, holdMs);
   }
 }
 
@@ -177,7 +230,7 @@ pet.addEventListener('error', () => {
     pet.dataset.fellBack = '1';
     currentMood = 'idle';
     pet.src = idleSrc;
-    el.pet.play?.()?.catch?.(() => {});
+    pet.play?.()?.catch?.(() => {});
     return;
   }
   pet.style.display = 'none';
@@ -196,13 +249,16 @@ setInterval(() => {
   if (pet.paused || pet.readyState < 2) pet.play?.()?.catch?.(() => {});
 }, 3000);
 
-/* 空闲时自己玩一下：每 16–22 秒换一个小动作 */
+/* 恢复原来的空闲小动作，朗读期间持续敲键盘。 */
 setInterval(() => {
-  if (state.typing || !state.audioUnlocked) return;
+  if (state.story?.phase === 'reading' || state.typing || !state.audioUnlocked) return;
   const quiet = phaseMood(state.story?.phase || 'idle');
   if (currentMood !== quiet && currentMood !== 'idle') return;
   if (Math.random() < 0.7) setMood(pick(IDLE_POOL), 4200 + Math.random() * 2400);
 }, 18000);
+for (const audio of [el.voicePlayer, el.storyAudio]) {
+  audio.addEventListener('playing', () => setMood(phaseMood(state.story?.phase || 'idle')));
+}
 
 /* ---------- 礼物提示 ---------- */
 let toastTimer = null;
@@ -222,63 +278,117 @@ function showToast(gift, username) {
 }
 
 /* ---------- 弹幕 ---------- */
-/* 语音回复：优先播服务端合成好的那一句，没给就前端自己合成 */
+const replyAudioQueue = [];
+const GIFT_ACTION_MS = 10_100; // 礼物动作视频各约 10 秒，播完一轮再接下一句。
+let replyAudioBusy = false;
+
+function reportGameSummaryEnded(item, played) {
+  fetch('/api/luanti/summary-ended', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventId: item.id, played }),
+  }).catch(() => {});
+}
+
+function finishGiftAction(item) {
+  if (!item.giftAction) return Promise.resolve();
+  const action = GIFT_ACTIONS.find(({ gifts }) => gifts.includes(item.giftAction));
+  setMood(action?.mood ?? pick(GIFT_POOL), GIFT_ACTION_MS, { gift: true });
+  return new Promise((resolve) => setTimeout(resolve, GIFT_ACTION_MS));
+}
+
+/* 所有回复共用一个 FIFO：新句只排队，绝不 pause 正在播的上一句。 */
 function playReplyAudio(item) {
+  if (state.closed) return;
+  replyAudioQueue.push(item);
+  pumpReplyAudio();
+}
+
+function pumpReplyAudio() {
+  if (replyAudioBusy || !replyAudioQueue.length || state.closed) return;
+  replyAudioBusy = true;
+  const item = replyAudioQueue.shift();
+  playReplyAudioNow(item)
+    .catch((err) => console.warn('[voice] 回复播放失败：', err.message))
+    .finally(() => {
+      replyAudioBusy = false;
+      pumpReplyAudio();
+    });
+}
+
+async function playReplyAudioNow(item) {
+  const isGiftReply = item.source === 'gift-thanks';
+  const isGameSummary = item.source === 'luanti-summary';
+  if (isGameSummary && !state.voiceEnabled) {
+    reportGameSummaryEnded(item, false);
+    return;
+  }
   const text = String(item.text || '').trim();
-  if (!text) return;
-  const showHint = () => {
-    if (!el.voiceHint) return;
+  if (!isGiftReply && (!text || !state.voiceEnabled || (storyPausedForReply && !item.voice))) return;
+  if (isGiftReply && (!item.voice || !state.voiceEnabled)) {
+    await finishGiftAction(item);
+    return;
+  }
+  if (el.voiceHint) {
     el.voiceHint.hidden = false;
-    /* 插播时加个记号：观众知道正文为什么停了、马上会接着念 */
     const mark = item.interruptStory ? '🎤 插播' : '🔊';
     el.voiceHint.textContent = `${mark} ${text.length > 34 ? `${text.slice(0, 34)}…` : text}`;
     clearTimeout(playReplyAudio.timer);
     playReplyAudio.timer = setTimeout(() => {
       el.voiceHint.hidden = true;
     }, Math.max(5000, text.length * 260));
-  };
-  if (!state.voiceEnabled || (storyPausedForReply && !item.voice)) return;
-  showHint();
+  }
+  if (isGameSummary && !item.voice) {
+    reportGameSummaryEnded(item, false);
+    return;
+  }
   if (item.voice) {
     const url = new URL(item.voice, location.origin).href;
-    if (item.interruptStory && state.story?.phase === 'reading' && !el.storyAudio.paused && !el.storyAudio.ended) {
+    if ((item.interruptStory || isGiftReply) && state.story?.phase === 'reading' && !el.storyAudio.paused && !el.storyAudio.ended) {
       storyPausedForReply = true;
       storyPausedAt = Date.now();
       el.storyAudio.pause();
       reportStoryPaused(true);
     }
-    speakToken += 1; /* 打断上一句 */
-    el.voicePlayer.pause();
+    speakToken += 1; /* 让已经失效的前端分段任务退出，不打断当前完整语音 */
     el.voicePlayer.src = url;
     el.voicePlayer.volume = Number(state.voiceVolume ?? 0.8);
     clearTimeout(replyAudioTimer);
-    const restore = () => {
-      if (el.voicePlayer.onended !== restore) return;
-      clearTimeout(replyAudioTimer);
-      el.voicePlayer.onended = null;
-      el.voicePlayer.onerror = null;
-      restoreStoryDisplay();
-      if (storyPausedForReply) {
-        storyPausedForReply = false;
-        storyPausedAt = 0;
-        reportStoryPaused(false);
-        if (state.story) syncStoryAudio(state.story, { resume: true });
+    const played = await new Promise((resolve) => {
+      let settled = false;
+      const restore = (event) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(replyAudioTimer);
+        el.voicePlayer.onended = null;
+        el.voicePlayer.onerror = null;
+        resolve(event?.type === 'ended');
+      };
+      el.voicePlayer.onended = restore;
+      el.voicePlayer.onerror = restore;
+      if (item.voice) {
+        replyAudioTimer = setTimeout(() => {
+          el.voicePlayer.pause();
+          restore();
+        }, Math.max(30_000, text.length * 450));
       }
-    };
-    el.voicePlayer.onended = restore;
-    el.voicePlayer.onerror = restore;
+      el.voicePlayer.play().catch(restore);
+    });
+    if (isGiftReply) await finishGiftAction(item);
+    restoreStoryDisplay();
     if (storyPausedForReply) {
-      replyAudioTimer = setTimeout(() => {
-        el.voicePlayer.pause();
-        restore();
-      }, Math.max(30_000, text.length * 450));
+      storyPausedForReply = false;
+      storyPausedAt = 0;
+      reportStoryPaused(false);
+      if (state.story) syncStoryAudio(state.story, { resume: true });
     }
-    el.voicePlayer.play().catch(restore);
-    setMood(Math.random() < 0.5 ? 'talk' : 'happy', 5200);
+    if (isGameSummary) reportGameSummaryEnded(item, played);
+    setMood(phaseMood(state.story?.phase || 'idle'));
     return;
   }
-  speak(text);
-  setMood(Math.random() < 0.5 ? 'talk' : 'happy', 5200);
+  await speak(text);
+  if (isGiftReply) await finishGiftAction(item);
+  setMood(phaseMood(state.story?.phase || 'idle'));
 }
 
 function addMessage(item, { animate = true } = {}) {
@@ -326,13 +436,15 @@ function addMessage(item, { animate = true } = {}) {
   while (feed.children.length > 50) feed.removeChild(feed.firstElementChild);
   scrollFeed();
 
-  if (item.kind === 'gift') {
-    showToast(item.gift, item.username);
+  if (item.kind === 'gift' && item.gift) {
     renderThanks();
-    setMood(pick(GIFT_POOL), 5600);
+    if (animate) {
+      showToast(item.gift, item.username);
+      if (!item.giftReplyPending) playReplyAudio({ source: 'gift-thanks', giftAction: item.gift.name });
+    }
   } else if (item.kind === 'enter' || item.kind === 'follow') {
     setMood('greet', 3400);
-  } else if (animate && (item.interruptStory || item.voice)) {
+  } else if (animate && (item.interruptStory || item.voice || item.source === 'gift-thanks')) {
     /* 只要带语音就播：进房欢迎、功能提示、暖场这些不是「插播」，
      * 不会暂停正文（interruptStory 为假时 playReplyAudio 里不会按暂停）。 */
     playReplyAudio(item);
@@ -385,7 +497,7 @@ function typeStory(text, speed = 34, onDone) {
       state.typing = null;
       bubble.classList.remove('typing');
       setTimeout(() => {
-        if (currentMood === 'talk') setMood('idle');
+        if (currentMood === 'talk') setMood(phaseMood(state.story?.phase || 'idle'));
       }, 1600);
       if (onDone) onDone();
     }
@@ -414,7 +526,6 @@ function splitSpeech(text, max = 78) {
 }
 
 let speakToken = 0;
-let voiceChain = Promise.resolve();
 
 function synthChunk(text) {
   return fetch(`${SERVER}/api/voice/say`, {
@@ -450,29 +561,24 @@ function playVoiceOnce(url, token) {
   });
 }
 
-function speak(text) {
-  if (!state.voiceEnabled || !text) return;
+async function speak(text) {
+  if (state.closed || !state.voiceEnabled || !text) return;
   const chunks = splitSpeech(text);
   if (!chunks.length) return;
   const token = ++speakToken;
   state.voicePlaying = text;
-  // 新的台词来了，旧的那段立刻闭嘴
-  el.voicePlayer.pause();
-  voiceChain = voiceChain.then(async () => {
+  let next = synthChunk(chunks[0]);
+  for (let i = 0; i < chunks.length; i++) {
     if (token !== speakToken) return;
-    let next = synthChunk(chunks[0]);
-    for (let i = 0; i < chunks.length; i++) {
-      if (token !== speakToken) return;
-      const url = await next;
-      next = i + 1 < chunks.length ? synthChunk(chunks[i + 1]) : null;
-      if (token !== speakToken) return;
-      if (url) await playVoiceOnce(url, token);
-    }
-    if (token === speakToken) {
-      state.voicePlaying = null;
-      el.player.volume = Number(state.musicVolume ?? 0.2);
-    }
-  });
+    const url = await next;
+    next = i + 1 < chunks.length ? synthChunk(chunks[i + 1]) : null;
+    if (token !== speakToken) return;
+    if (url) await playVoiceOnce(url, token);
+  }
+  if (token === speakToken) {
+    state.voicePlaying = null;
+    el.player.volume = Number(state.musicVolume ?? 0.2);
+  }
 }
 
 /* ---------- 念小说 ---------- */
@@ -570,6 +676,24 @@ function infoNode(text) {
   return box;
 }
 
+/* 原文本是「全角缩进 + 每 30 来字硬换行」的排印稿，直接铺到页面上会一行没几个字、
+   右边留一大片空白。这里把段内的硬换行和全角缩进压掉，只按空行分段。 */
+function flowText(raw) {
+  const paras = [];
+  let buf = '';
+  for (const line of String(raw ?? '').replace(/\r\n?/g, '\n').split('\n')) {
+    const t = line.replace(/[\u3000\s]+/g, '');
+    if (!t) {
+      if (buf) paras.push(buf);
+      buf = '';
+      continue;
+    }
+    buf += t;
+  }
+  if (buf) paras.push(buf);
+  return paras.join('\n\n');
+}
+
 function renderStoryContent(story) {
   if (!story || !bubble) return;
   const mode = state.storyDisplayMode || 'story';
@@ -589,12 +713,12 @@ function renderStoryContent(story) {
     /* 还没开讲：纸面别空着，给观众一句能接话的 */
     const at = /^\d{1,2}:\d{2}$/.test(String(story.startAt || ''))
       ? `${story.startAt} 开讲`
-      : '等本鲸开口';
-    bubble.textContent = `灯还亮着，书还没翻。${at}——这会儿先陪你们聊聊天，点歌、说话都行，本鲸都听着呢。`;
+      : '等我开口';
+    bubble.textContent = `灯还亮着，书还没翻。${at}——这会儿先陪你们聊聊天，点歌、说话都行，我都听着呢。`;
     bubble.scrollTop = 0;
     return;
   }
-  bubble.textContent = cleanEscapes(story.text || '');
+  bubble.textContent = flowText(cleanEscapes(story.text || ''));
   const ratio = Math.max(0, Math.min(1, Number(state.storyProgressRatio) || 0));
   requestAnimationFrame(() => {
     const max = bubble.scrollHeight - bubble.clientHeight;
@@ -704,6 +828,7 @@ el.storyAudio.addEventListener('loadedmetadata', () => {
 }
 
 function syncStoryAudio(story, { resume = false } = {}) {
+  if(state.closed)return;
   if (!el.storyAudio) return;
   const url = story.phase === 'reading' && story.audioUrl ? new URL(story.audioUrl, location.origin).href : '';
   if (!url) {
@@ -755,6 +880,7 @@ function syncStoryAudio(story, { resume = false } = {}) {
 setInterval(() => {
   if (!storyPausedForReply) return;
   if (Date.now() - storyPausedAt < 8000) return; /* 刚暂停，给回复留点启动时间 */
+  if (replyAudioBusy) return; // 回复有超时兜底；礼物动作尚未结束时也保持正文暂停。
   if (el.voicePlayer && !el.voicePlayer.paused && !el.voicePlayer.ended) return;
   storyPausedForReply = false;
   storyPausedAt = 0;
@@ -793,7 +919,7 @@ function archiveNode(a) {
 }
 
 function renderStory(story, { silent = false, mood = null } = {}) {
-  if (!story) return;
+  if (!story || (state.broadcast && state.broadcast.mode !== 'story')) return;
   state.story = story;
   state.storyDisplayMode = ['story', 'characters', 'settings'].includes(story.displayMode) ? story.displayMode : 'story';
   el.title.textContent = story.title || '今晚念什么';
@@ -826,11 +952,11 @@ function renderStory(story, { silent = false, mood = null } = {}) {
   syncStoryAudio(story);
   renderToc(story);
 
-  /* 阶段换了就换成这个阶段的常态动作（准备中=忙、朗读=敲桌子、休息=哼歌、讨论=思考） */
+  /* 阶段变化立即更新常态；礼物期间由动作结束回调恢复最新阶段。 */
   const ph = story.phase || 'idle';
   if (state.lastPhase !== ph) {
     state.lastPhase = ph;
-    if (!state.typing) setMood(phaseMood(ph), 0);
+    setMood(phaseMood(ph), 0);
   }
 
   /* 本章线索卡只在「休息」时露脸：朗读中看正文、作品讨论看档案 */
@@ -913,13 +1039,27 @@ function renderThanks() {
     return;
   }
   el.giftThanks.hidden = false;
-  el.thanksText.textContent = `谢谢 ${ev.username} 的 ${ev.gift.name} ×${ev.gift.count || 1}，本鲸收下了。`;
+  el.thanksText.textContent = `谢谢 ${ev.username} 的 ${ev.gift.name} ×${ev.gift.count || 1}，我收下了。`;
 }
 
 /* ---------- 统计 / 礼物 / 点歌 ---------- */
 function renderStats(s) {
   if (!s) return;
   state.stats = s;
+  const donors = document.getElementById('giftDonors');
+  if (donors) {
+    const rows = (s.giftDonors || []).map((v, i) => {
+      const row = document.createElement('li');
+      const name = document.createElement('span');
+      name.className = 'donor-name'; name.textContent = String(i + 1) + '. ' + v.username;
+      name.title = v.username;
+      const detail = document.createElement('span');
+      detail.className = 'donor-detail'; detail.textContent = '今日 ' + v.count + ' 件 · 最近' + v.lastGift;
+      row.append(name, detail); return row;
+    });
+    if (!rows.length) { const row = document.createElement('li'); row.className = 'empty'; row.textContent = '等第一位送礼的朋友'; rows.push(row); }
+    donors.replaceChildren(...rows);
+  }
   const giftMap = s.gifts && typeof s.gifts === 'object' ? s.gifts : {};
   const giftN = Object.values(giftMap).reduce((a, b) => a + Number(b || 0), 0);
   el.spent.textContent = money(s.spent);
@@ -934,16 +1074,44 @@ function renderStats(s) {
   if (el.danmakuN && state.events.length) el.danmakuN.textContent = `${state.events.length} 条`;
 }
 
+/* 故事间：把「点歌队列」卡从右上角整块挪到底栏右栏（原来放消息列表的位置）。
+ * 卡片本身没有任何 <audio>（播放器都在 .audio-dock 里），所以整块挪动不会打断正在放的歌；
+ * 其它模式和普通直播仍然留在右上角。 */
+const queueCard = document.querySelector('.stage > .queue-card');
+const storyMusicSlot = document.getElementById('storyMusicSlot');
+function placeQueueCard(isStory) {
+  if (!queueCard || !storyMusicSlot) return;
+  const host = isStory ? storyMusicSlot : document.querySelector('.stage');
+  if (host && queueCard.parentElement !== host) host.appendChild(queueCard);
+}
+
 function renderBroadcast(view) {
   if (!view) return;
   state.broadcast = view;
-  const mode = view.mode === 'fitness' ? 'fitness' : 'story';
+  const { mode } = view;
+  const isStory = mode === 'story';
+  showGame(mode === 'game');
+  showLuanti(mode === 'luanti');
+  document.body.classList.toggle('broadcast-luanti', mode === 'luanti');
+  storyStage.hidden = !isStory;
+  el.clock.hidden = !isStory;
+  document.body.classList.toggle('broadcast-chat', mode === 'chat' || mode === 'luanti');
+  document.body.classList.toggle('broadcast-story', isStory);
   document.body.classList.toggle('broadcast-fitness', mode === 'fitness');
-  if (el.broadcastMode) el.broadcastMode.hidden = !view.enabled;
-  if (el.broadcastModeTitle) el.broadcastModeTitle.textContent = view.title || (mode === 'fitness' ? '健身指导' : '故事直播');
+  placeQueueCard(isStory);
+  if (!isStory) {
+    state.story = null;
+    clearInterval(state.typing);
+    state.typing = null;
+    state.clockBase = null;
+    el.storyAudio.pause();
+    el.phaseChip.textContent = view.title;
+  }
+  if (el.broadcastMode) el.broadcastMode.hidden = mode !== 'fitness' && !(isStory && view.enabled);
+  if (el.broadcastModeTitle) el.broadcastModeTitle.textContent = view.title;
   if (el.broadcastModeText) {
     el.broadcastModeText.textContent = mode === 'fitness'
-      ? '健身时段走 /fitness 画面（动作演示 + 排课）；故事间这边暂停朗读'
+      ? '动作演示和排课在 /fitness 页面'
       : 'DeepSeek 负责互动话术，故事由本地定时器按进度播放';
   }
   if (el.fitnessMode) el.fitnessMode.hidden = mode !== 'fitness';
@@ -962,10 +1130,9 @@ function renderBalance(b) {
 function renderGifts(gifts) {
   const list = (gifts || []).slice(0, 3);
   el.giftList.innerHTML = '';
-  if (!list.length) {
-    el.giftList.innerHTML = '<li class="empty"><span class="gift-emoji">🎁</span><span class="gift-name">等第一份礼物</span><span class="gift-amount">—</span></li>';
-    return;
-  }
+  // 没收到礼物时不再画占位胶囊：那个「圆角框 + 右侧横杠」在直播画面里会被看成下拉框。
+  // 空状态由上方 giftCount 的「还没有收到礼物」文案承担。
+  if (!list.length) return;
   for (const g of list) {
     const li = document.createElement('li');
     li.innerHTML = `<span class="gift-emoji">${g.emoji || '🎁'}</span><span class="gift-name">${escapeHtml(g.name)}</span><span class="gift-amount">×${g.count || 1}</span>`;
@@ -978,6 +1145,7 @@ function escapeHtml(s) {
 }
 
 function renderSong(song) {
+  if(state.closed)return;
   const cur = song?.currentSong;
   const text = el.nowText;
   text.textContent = cur ? `${cur.title}${cur.by ? ' · ' + cur.by : ''}` : '还没有点歌 · 发「点歌 歌名」';
@@ -1031,22 +1199,28 @@ function renderSong(song) {
   });
 }
 
-/* 左栏目录：第几章、叫什么、念到哪儿 */
+/* 左栏目录：只露「正在读的那一章」起 5 章，靠近结尾时向前补齐 */
+const TOC_SPAN = 5;
 function renderToc(story) {
   if (!el.toc) return;
   const chapters = (story && story.chapters) || [];
   if (el.tocWrap) el.tocWrap.hidden = !chapters.length;
-  el.tocN.textContent = chapters.length ? `${chapters.length} 章` : '';
+  const total = chapters.length;
+  const cur = chapters.findIndex((c) => c.current);
+  const from = !total ? 0 : cur < 0 ? 0 : Math.min(cur, Math.max(0, total - TOC_SPAN));
+  const visible = total ? chapters.slice(from, from + TOC_SPAN) : [];
+  el.tocN.textContent = total ? (cur >= 0 ? `在读 ${cur + 1} / ${total} 章` : `${total} 章`) : '';
   el.toc.innerHTML = '';
-  chapters.forEach((c, i) => {
+  visible.forEach((c, i) => {
+    const n = from + i;
     const li = document.createElement('li');
     li.className = c.current ? 'current' : c.done ? 'done' : '';
     const idx = document.createElement('span');
     idx.className = 'toc-idx';
-    idx.textContent = String(i + 1).padStart(2, '0');
+    idx.textContent = String(n + 1).padStart(2, '0');
     const title = document.createElement('span');
     title.className = 'toc-title';
-    title.textContent = c.title || `第 ${i + 1} 章`;
+    title.textContent = c.title || `第 ${n + 1} 章`;
     li.append(idx, title);
     el.toc.appendChild(li);
   });
@@ -1075,7 +1249,7 @@ function ensureFeedHint() {
   const node = document.createElement('div');
   node.className = 'danmaku-empty';
   node.id = 'danmakuEmpty';
-   node.innerHTML = '<b>弹幕会从这儿滚过去</b><span>发「查看角色」或「查看设定」切换中间内容 · 发「点歌 歌名」点歌</span>';
+  node.innerHTML = '<b>弹幕会从这儿滚过去</b><span>发「点歌 歌名」点歌</span>';
   el.feed.appendChild(node);
 }
 
@@ -1130,11 +1304,21 @@ function initPlayer() {
   });
 }
 
+function applyPetScale(config) {
+  const storyValue = Number(config?.scene?.storyPetScale ?? 1);
+  document.getElementById('petZone').style.setProperty('--story-pet-scale', String(Number.isFinite(storyValue) ? Math.max(.5, Math.min(1.5, storyValue)) : 1));
+  const value = Number(config?.scene?.petScale ?? 1);
+  const scale = Number.isFinite(value) ? Math.max(.5, Math.min(1.5, value)) : 1;
+  document.getElementById('petZone').style.setProperty('--pet-user-scale', String(scale));
+}
+
 /* ---------- 初始化 ---------- */
 function applyInit(payload, { replay = true } = {}) {
+  applyPetScale(payload.config);
   renderBroadcast(payload.broadcast);
   renderStats(payload.stats);
   renderBalance(payload.balance);
+  renderGiftActions(payload.gifts ?? payload.config?.gifts);
   if (payload.config?.music?.volume != null) state.musicVolume = Number(payload.config.music.volume);
   if (payload.config?.voice) {
     state.voiceVolume = Number(payload.config.voice.volume ?? 0.8);
@@ -1173,6 +1357,7 @@ function applyInit(payload, { replay = true } = {}) {
 
 /* ---------- SSE ---------- */
 function connect() {
+  if(state.closed)return;
   const es = new EventSource(`${SERVER}/api/events`);
   es.onmessage = (evt) => {
     let payload;
@@ -1182,6 +1367,23 @@ function connect() {
       return;
     }
     switch (payload.type) {
+      case 'shutdown':
+        state.closed=true;state.voiceEnabled=false;state.userPaused=true;state.song=null;state.story=null;
+        es.close();
+        clearTimeout(replyAudioTimer);clearTimeout(playReplyAudio.timer);clearInterval(state.typing);
+        replyAudioQueue.length=0;
+        speakToken++;window.speechSynthesis?.cancel();
+        showLuanti(false);showGame(false);
+        document.querySelectorAll('audio,video').forEach(media=>{
+          media.onended=null;media.onerror=null;media.muted=true;media.pause();
+          media.removeAttribute('src');media.load();
+          media.addEventListener('play',()=>{media.muted=true;media.pause();});
+        });
+        const closed=document.createElement('div');
+        closed.textContent='直播间已关闭';closed.setAttribute('role','status');
+        closed.style.cssText='position:fixed;inset:0;z-index:99999;display:grid;place-items:center;background:#14100ded;color:#eee;font-size:32px;';
+        document.body.append(closed);
+        break;
       case 'init':
         applyInit(payload);
         break;
@@ -1189,6 +1391,9 @@ function connect() {
         state.events.push(payload.item);
         if (state.events.length > 50) state.events.splice(0, state.events.length - 50);
         addMessage(payload.item);
+        break;
+      case 'gift-action':
+        playReplyAudio({ source: 'gift-thanks', giftAction: payload.name });
         break;
       case 'boot':
         state.events = [];
@@ -1216,6 +1421,8 @@ function connect() {
         break;
       case 'config':
         if (payload.config) {
+          applyPetScale(payload.config);
+          if (payload.config.gifts) renderGiftActions(payload.config.gifts);
           if (payload.config.music?.volume != null) {
             state.musicVolume = Number(payload.config.music.volume);
             if (el.voicePlayer.paused) el.player.volume = state.musicVolume;
@@ -1234,7 +1441,7 @@ function connect() {
   };
   es.onerror = () => {
     es.close();
-    setTimeout(connect, 2500);
+    if(!state.closed)setTimeout(connect, 2500);
   };
 }
 
@@ -1266,6 +1473,7 @@ const soundReady = () =>
 
 /* 先试不静音直接播；被拦就静音开播，开起来立刻把静音和音量还回去（不留静音窗口） */
 async function bootAudio() {
+  if(state.closed)return false;
   const start = async () => {
     if (el.player.src && el.player.paused) await el.player.play().catch(() => {});
   };
@@ -1293,6 +1501,7 @@ async function bootAudio() {
 
 /* 自愈：静音态/被暂停时，只要队列里还有歌就继续响（用户手动按过暂停就不动） */
 function ensureMusicPlaying() {
+  if(state.closed)return;
   const cur = state.song?.currentSong;
   if (!cur?.url) return;
   if (el.player.muted) {

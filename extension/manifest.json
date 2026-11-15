@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
   "name": "大肥鱼 · 抖音弹幕桥",
-  "version": "1.0.0",
+  "version": "1.0.1",
+  "background": { "service_worker": "background.js" },
   "description": "把抖音直播间的弹幕 / 礼物 / 进场抓给大肥鱼直播页，并把大肥鱼的回复自动发回直播间。",
   "permissions": ["storage"],
   "host_permissions": [
